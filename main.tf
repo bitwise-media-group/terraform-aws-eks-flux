@@ -7,9 +7,9 @@
 # node group for platform controllers (label role=system) and Karpenter for
 # everything else.
 #
-# Where GKE manages DNS, metrics, CSI and the metadata server itself, EKS
-# delegates them to add-ons — so everything AWS offers managed is taken managed
-# (see var.addons) and only the rest reaches the cluster through flux.
+# EKS delegates DNS, metrics and CSI to add-ons — so everything AWS offers
+# managed is taken managed (see var.addons) and only the rest reaches the
+# cluster through flux.
 #
 # BOOTSTRAP ORDER is the load-bearing constraint in this file. A node cannot
 # report Ready without a CNI, and in ENI mode the Cilium agent cannot report
@@ -228,8 +228,7 @@ resource "aws_eks_access_policy_association" "cluster_admins" {
 locals {
   # role key -> { principal_arn, group }, empty unless rbac.enabled. The group
   # names (not the ARNs) are what reach flux-manifests as RBAC_GROUP_*, so the
-  # manifests contract is identical to the GKE clusters' — only the subject
-  # type behind it differs.
+  # manifests contract never carries an IAM-specific subject type.
   rbac_roles = var.rbac.enabled ? {
     for role, subject in var.rbac.groups : role => subject if subject != null
   } : {}
@@ -263,7 +262,7 @@ resource "aws_eks_node_group" "system" {
   disk_size      = var.system_node_pool.disk_size_gib
 
   scaling_config {
-    # Cluster-wide totals, unlike GKE's per-zone regional pool counts.
+    # Cluster-wide totals, not per-zone counts.
     min_size     = var.system_node_pool.min_size
     max_size     = var.system_node_pool.max_size
     desired_size = var.system_node_pool.desired_size
@@ -281,8 +280,8 @@ resource "aws_eks_node_group" "system" {
     effect = "NO_EXECUTE"
   }
 
-  # The analogue of GKE's management { auto_repair = true }; the health signals
-  # come from the eks-node-monitoring-agent add-on.
+  # Node auto-repair; the health signals come from the
+  # eks-node-monitoring-agent add-on.
   node_repair_config {
     enabled = true
   }

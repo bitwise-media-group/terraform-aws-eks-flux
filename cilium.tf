@@ -8,7 +8,7 @@
 # addresses: the control plane reaches admission webhooks directly, the
 # Gateway's NLB can target pod IPs, and the datapath matches what vpc-cni would
 # have given us. It also makes raw CiliumNetworkPolicy / FQDNNetworkPolicy
-# usable, which GKE Dataplane V2 rejects.
+# usable, which managed Cilium distributions typically reject.
 #
 # This is the ONLY helm release in the root module, and it exists here rather
 # than in flux for one reason: a node cannot report Ready without a CNI, so

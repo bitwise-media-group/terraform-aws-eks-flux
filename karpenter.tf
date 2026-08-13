@@ -1,7 +1,7 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-# Karpenter — the replacement for GKE node auto-provisioning. Karpenter is not
+# Karpenter — node auto-provisioning for workload capacity. Karpenter is not
 # an EKS add-on (it is in neither the AWS nor the community catalogue); the only
 # AWS-managed Karpenter is EKS Auto Mode, which owns networking with the VPC CNI
 # and so cannot run Cilium in ENI mode.

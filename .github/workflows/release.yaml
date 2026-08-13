@@ -6,7 +6,7 @@
 # Conventional Commit history; when that PR merges the workflow cuts the GitHub
 # release + vX.Y.Z tag. There is no .goreleaser.yaml here — the deliverable IS
 # the tag: consumers reference the module as
-# git::https://github.com/bitwise-media-group/terraform-google-gke-flux.git?ref=vX.Y.Z
+# git::https://github.com/bitwise-media-group/terraform-aws-eks-flux.git?ref=vX.Y.Z
 #
 # app-client-id/app-private-key author the release-please PR as the "FF Merge"
 # App instead of the GITHUB_TOKEN. A GITHUB_TOKEN-authored push fires no

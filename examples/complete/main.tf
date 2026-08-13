@@ -6,8 +6,7 @@
 # channel, pre-created workload namespaces and extra cluster vars / kustomize
 # patches. This is the shape a real patchy deployment root will take.
 #
-# PREREQUISITES this example does not create (they live upstream, the AWS
-# analogue of what cloud-accounts provides for GKE):
+# PREREQUISITES this example does not create (they live upstream):
 #
 #   - the VPC, its private node subnets and public subnets, with NAT or the
 #     ECR/S3/STS/EKS VPC endpoints nodes need to pull images and reach the API
