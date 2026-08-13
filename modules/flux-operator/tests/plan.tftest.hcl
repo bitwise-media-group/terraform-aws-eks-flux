@@ -82,7 +82,7 @@ run "sync_is_signature_verified" {
   # backslashes, which yamlencode escapes again on the way in.
   assert {
     condition     = yamldecode(local.sync_verify_patches[0].patch)[0].value.provider == "cosign"
-    error_message = "verification is cosign keyless — no key material is distributed anywhere"
+    error_message = "verification is cosign — in keyless mode no key material is distributed anywhere"
   }
 
   assert {
@@ -99,6 +99,31 @@ run "sync_is_signature_verified" {
       == var.signed_identity.issuer
     )
     error_message = "the patch must pin the issuer as well as the subject"
+  }
+}
+
+run "keyed_verification" {
+  command = plan
+
+  variables {
+    signed_identity = {
+      kms_public_key_pem = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n-----END PUBLIC KEY-----\n"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(local.sync_verify_patches[0].patch)[0].value.secretRef.name == "cosign-pub"
+    error_message = "keyed mode must verify against the cosign-pub public-key Secret — source-controller never calls the signing service"
+  }
+
+  assert {
+    condition     = !can(yamldecode(local.sync_verify_patches[0].patch)[0].value.matchOIDCIdentity)
+    error_message = "keyed mode must not also carry a keyless identity match"
+  }
+
+  assert {
+    condition     = strcontains(helm_release.cluster_inputs.values[0], "cosignPublicKey")
+    error_message = "the cluster-inputs chart must receive the public key to render the cosign-pub Secret"
   }
 }
 

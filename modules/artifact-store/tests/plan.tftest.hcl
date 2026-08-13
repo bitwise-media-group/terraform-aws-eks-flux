@@ -193,3 +193,36 @@ run "registry_output_is_not_a_cache" {
     error_message = "the url must be the registry host plus the repository prefix, ready to pass straight to a cluster"
   }
 }
+
+run "kms_signing_grants_publishers" {
+  command = plan
+
+  variables {
+    signing_kms_key_arn = "arn:aws:kms:eu-west-2:123456789012:key/1234abcd-12ab-4bcd-8def-1234567890ab"
+  }
+
+  assert {
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.publisher.statement :
+      statement.sid == "CosignSign" && contains(statement.actions, "kms:Sign")
+    ])
+    error_message = "KMS signing mode must grant the publishers kms:Sign on the signing key"
+  }
+
+  assert {
+    condition     = output.signing_kms_key_arn == "arn:aws:kms:eu-west-2:123456789012:key/1234abcd-12ab-4bcd-8def-1234567890ab"
+    error_message = "the signing key must be exported for wiring into the cluster module's signed_identity"
+  }
+}
+
+run "keyless_signing_grants_no_kms" {
+  command = plan
+
+  assert {
+    condition = !anytrue([
+      for statement in data.aws_iam_policy_document.publisher.statement :
+      statement.sid == "CosignSign"
+    ])
+    error_message = "keyless mode must grant the publishers no KMS access"
+  }
+}

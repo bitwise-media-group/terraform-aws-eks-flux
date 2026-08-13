@@ -127,6 +127,26 @@ data "aws_iam_policy_document" "publisher" {
 
     resources = [local.repository_arn_pattern]
   }
+
+  # KMS signing mode: cosign signs with awskms:///<key> from the publish
+  # workflows, which needs Sign plus the public-key/metadata reads cosign
+  # performs around it. Absent entirely in keyless mode.
+  dynamic "statement" {
+    for_each = var.signing_kms_key_arn != null ? ["this"] : []
+
+    content {
+      sid    = "CosignSign"
+      effect = "Allow"
+
+      actions = [
+        "kms:Sign",
+        "kms:GetPublicKey",
+        "kms:DescribeKey",
+      ]
+
+      resources = [var.signing_kms_key_arn]
+    }
+  }
 }
 
 # Both publishers hold push on the whole platform prefix — per-namespace push

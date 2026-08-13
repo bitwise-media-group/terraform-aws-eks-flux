@@ -65,7 +65,7 @@ output "oidc_provider_arn" {
 }
 
 output "signed_identity_subjects" {
-  description = "Fulcio certificate-subject regexps for the publishing workflows — feed these to the cluster module's signed_identity variable. Cloud-agnostic: the signer is GitHub, so these are identical to the GKE store's."
+  description = "Fulcio certificate-subject regexps for the publishing workflows (keyless mode) — feed these to the cluster module's signed_identity variable. Cloud-agnostic: the signer is GitHub, not the hosting cloud. Irrelevant when signing_kms_key_arn selects KMS signing."
   value = {
     containers = "^https://github\\.com/${var.github.org}/${var.github.containers}/\\.github/workflows/publish\\.yaml@refs/heads/main$"
     manifests  = "^https://github\\.com/${var.github.org}/${var.github.manifests}/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
@@ -73,4 +73,9 @@ output "signed_identity_subjects" {
     # signed_identity.manifests_subject instead of the release identity above
     manifests_edge = "^https://github\\.com/${var.github.org}/${var.github.manifests}/\\.github/workflows/publish-edge\\.yaml@refs/heads/main$"
   }
+}
+
+output "signing_kms_key_arn" {
+  description = "The KMS signing key the publishers sign with (null in keyless mode) — feed it to the cluster module's signed_identity.kms_key_arn so verification matches."
+  value       = var.signing_kms_key_arn
 }

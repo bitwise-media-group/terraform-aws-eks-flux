@@ -12,15 +12,14 @@ variable "name" {
   }
 }
 
-# No region variable: unlike GKE, where the cluster is a regional resource and
-# the region is part of its identity, an EKS cluster is placed by the provider.
-# The AWS_REGION cluster var comes from aws_region rather than an input that
-# could disagree with it.
+# No region variable: an EKS cluster is placed by the provider. The AWS_REGION
+# cluster var comes from aws_region rather than an input that could disagree
+# with it.
 
 variable "network" {
   description = <<-EOT
-    Existing VPC wiring, created upstream (the AWS analogue of the shared VPC cloud-accounts builds for GKE) and never
-    owned here. node_subnet_ids are the private subnets nodes launch into; pod_subnet_ids narrows the subnets Cilium
+    Existing VPC wiring, created upstream and never owned here.
+    node_subnet_ids are the private subnets nodes launch into; pod_subnet_ids narrows the subnets Cilium
     allocates pod ENIs from (defaults to the node subnets); public_subnet_ids carry the Gateway's NLB and its reserved
     EIPs. manage_discovery_tags lets this module apply the karpenter.sh/discovery tag to those subnets — turn it off
     where the VPC owner tags them instead.
@@ -49,8 +48,8 @@ variable "kubernetes_version" {
 
 variable "upgrade_policy" {
   description = <<-EOT
-    EKS support policy — the closest analogue to a GKE release channel. STANDARD ends support at the end of standard
-    support; EXTENDED keeps a version supported (at extra cost) past that date.
+    EKS support policy. STANDARD ends support at the end of standard support; EXTENDED keeps a version supported (at
+    extra cost) past that date.
   EOT
   type        = string
   nullable    = false
@@ -74,7 +73,7 @@ variable "public_access_cidrs" {
 }
 
 variable "cluster_log_types" {
-  description = "Control-plane log streams shipped to CloudWatch Logs (the analogue of GKE's SYSTEM_COMPONENTS logging)."
+  description = "Control-plane log streams shipped to CloudWatch Logs."
   type        = set(string)
   nullable    = false
   default     = ["api", "audit", "authenticator"]
@@ -97,10 +96,10 @@ variable "encryption_kms_key_arn" {
 
 variable "rbac" {
   description = <<-EOT
-    Cluster RBAC subjects. EKS has no analogue of GKE's gke-security-groups@<domain> authenticator, so each role names an
-    IAM principal (typically an IAM Identity Center permission-set role ARN) and the Kubernetes group its access entry
-    maps to. The group names are published as RBAC_GROUP_<ROLE> cluster vars, which flux-manifests' rbac component binds
-    Role/ClusterRoleBindings against — so the manifests contract is identical to GKE's, only the subject type differs.
+    Cluster RBAC subjects. Each role names an IAM principal (typically an IAM Identity Center permission-set role ARN)
+    and the Kubernetes group its access entry maps to. The group names are published as RBAC_GROUP_<ROLE> cluster vars,
+    which flux-manifests' rbac component binds Role/ClusterRoleBindings against — the manifests contract carries only
+    group names, never the IAM subjects behind them.
   EOT
   type = object({
     enabled = optional(bool, false)
@@ -142,7 +141,7 @@ variable "cluster_admin_principals" {
 variable "system_node_pool" {
   description = <<-EOT
     The always-on managed node group platform controllers pin to (label role=system): flux, kyverno, cert-manager,
-    external-dns, karpenter and the rest. Unlike GKE's regional pools these counts are CLUSTER-WIDE totals, not per-zone.
+    external-dns, karpenter and the rest. These counts are CLUSTER-WIDE totals, not per-zone.
     Sizing must fit the whole platform tier — Karpenter only provisions workload capacity, never this.
   EOT
   type = object({
@@ -186,7 +185,7 @@ variable "cilium" {
 
 variable "karpenter" {
   description = <<-EOT
-    Workload capacity — the replacement for GKE node auto-provisioning. Terraform owns the IAM roles, the interruption
+    Workload capacity, provisioned by Karpenter. Terraform owns the IAM roles, the interruption
     queue and the discovery tags; the chart and the EC2NodeClass/NodePool objects are a flux-manifests component,
     rendered from the KARPENTER_* cluster vars this shape publishes (lists arrive comma-joined and are expanded with
     splitList, exactly as STACK_COMPONENTS already is).
@@ -242,9 +241,8 @@ variable "karpenter" {
 
 variable "addons" {
   description = <<-EOT
-    EKS add-ons. The GKE module has no addon surface because GKE manages DNS, metrics, CSI and the metadata server
-    itself; on EKS that is exactly what add-ons are for, so everything AWS offers managed is taken managed and only the
-    rest reaches the cluster through flux. vpc-cni and kube-proxy are absent by construction — Cilium replaces both, and
+    EKS add-ons. Everything AWS offers managed is taken managed, and only the rest reaches the cluster through flux.
+    vpc-cni and kube-proxy are absent by construction — Cilium replaces both, and
     bootstrap_self_managed_addons is off so EKS never installs them.
 
     aws-secrets-store-csi-driver-provider bundles the Secrets Store CSI driver alongside the AWS provider, so only the
@@ -301,16 +299,45 @@ variable "platform_registry" {
 
 variable "signed_identity" {
   description = <<-EOT
-    Cosign keyless verification identities (Go regexps matched against the Fulcio certificate). The artifact-store
-    module's signed_identity_subjects output provides the subjects; the issuer default matches GitHub Actions. Cloud
-    agnostic — the signing identities are GitHub's, not AWS's, so these are the same values the GKE clusters use.
+    Cosign verification identity for every platform artifact — exactly one of two modes.
+
+    KEYLESS (subjects set, kms_key_arn null): Go regexps matched against the Fulcio certificate of GitHub Actions OIDC
+    signatures. The artifact-store module's signed_identity_subjects output provides the subjects; the issuer default
+    matches GitHub Actions. Cloud agnostic — the signing identities are GitHub's, not AWS's, so the same values serve
+    clusters on any cloud.
+
+    KMS (kms_key_arn set, subjects null): the publish workflows sign with an asymmetric SIGN_VERIFY KMS key
+    (cosign sign --key awskms:///<arn>; the artifact-store module's signing_kms_key_arn grants the publishers kms:Sign).
+    The key's public half is distributed to the cluster as the flux-system cosign-pub Secret for the bootstrap verify
+    patch, the ARN is published as the SIGNED_IDENTITY_KMS_KEY cluster var, and kyverno's controllers get
+    kms:GetPublicKey / kms:Verify to resolve it at admission time.
   EOT
   type = object({
     issuer             = optional(string, "^https://token\\.actions\\.githubusercontent\\.com$")
-    manifests_subject  = string
-    containers_subject = string
+    manifests_subject  = optional(string)
+    containers_subject = optional(string)
+    kms_key_arn        = optional(string)
   })
   nullable = false
+
+  validation {
+    condition = var.signed_identity.kms_key_arn != null || (
+      var.signed_identity.manifests_subject != null && var.signed_identity.containers_subject != null
+    )
+    error_message = "Keyless verification needs both manifests_subject and containers_subject (or set kms_key_arn for KMS mode)."
+  }
+
+  validation {
+    condition = var.signed_identity.kms_key_arn == null || (
+      var.signed_identity.manifests_subject == null && var.signed_identity.containers_subject == null
+    )
+    error_message = "kms_key_arn and the keyless subjects are mutually exclusive — verification is keyless or KMS, never both."
+  }
+
+  validation {
+    condition     = var.signed_identity.kms_key_arn == null || can(regex("^arn:aws[a-z-]*:kms:", var.signed_identity.kms_key_arn))
+    error_message = "signed_identity.kms_key_arn must be a KMS key ARN."
+  }
 }
 
 variable "dns" {
@@ -361,7 +388,7 @@ variable "gateway" {
 variable "workload_identity" {
   description = <<-EOT
     Namespace/service-account pairs the EKS Pod Identity associations bind to — the terraform <-> flux-manifests
-    contract, identical in shape to the GKE module's so both clouds track the same manifests. Override only to follow a
+    contract, cloud-neutral in shape so every cluster tracks the same manifests. Override only to follow a
     manifests change.
   EOT
   type = object({
@@ -459,17 +486,19 @@ variable "stack_components" {
 variable "sso" {
   description = <<-EOT
     Platform SSO: deploys dex as the OIDC identity provider and wires every elected relying party to it -- generated
-    client pairs (sso.tf), the DEX_DIRECTORY_SECRET cluster var, and the human-facing HTTPRoutes. dex keeps its Google
-    Workspace connector so users and RBAC groups are identical across both clouds; EKS has no path to impersonate a
-    Google service account, so the directory-reader key is supplied OUT OF BAND into the Secrets Manager container this
-    module creates (never by terraform). Requires the DNS surface: the issuer and redirect URLs need the served domain.
+    client pairs (sso.tf), the DEX_DIRECTORY_SECRET cluster var, and the human-facing HTTPRoutes. dex federates to
+    whatever upstream identity provider the manifests configure its connector against. directory_secret creates a
+    Secrets Manager container for that connector's credentials (e.g. a directory-reader key for group claims), whose
+    value is supplied OUT OF BAND (never by terraform); turn it off when the configured connector needs no out-of-band
+    credential. Requires the DNS surface: the issuer and redirect URLs need the served domain.
     client_rotation holds the per-client rotation counters (keys: flux-web, patchy-status; absent keys default to 1) --
     bump one to mint a new client secret; the raw dex-client-* secret and any config document embedding the same value
     rewrite in one apply, so the pair cannot drift (then restart dex: it reads client secrets from env at startup).
   EOT
   type = object({
-    enabled         = optional(bool, false)
-    client_rotation = optional(map(number), {})
+    enabled          = optional(bool, false)
+    directory_secret = optional(bool, true)
+    client_rotation  = optional(map(number), {})
   })
   nullable = false
   default  = {}

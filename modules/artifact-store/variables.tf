@@ -129,6 +129,24 @@ variable "kms_key_arn" {
   default     = null
 }
 
+variable "signing_kms_key_arn" {
+  description = <<-EOT
+    Asymmetric SIGN_VERIFY KMS key the publish workflows sign artifacts with (cosign sign --key awskms:///<arn>),
+    instead of keyless Fulcio identities. When set, both publisher roles get kms:Sign / kms:GetPublicKey /
+    kms:DescribeKey on the key; feed the same ARN to the cluster module's signed_identity.kms_key_arn so verification
+    matches. Null keeps signing keyless (the signed_identity_subjects output). The key itself lives outside this
+    module — signing identity should outlive any one store.
+  EOT
+  type        = string
+  nullable    = true
+  default     = null
+
+  validation {
+    condition     = var.signing_kms_key_arn == null || can(regex("^arn:aws[a-z-]*:kms:", var.signing_kms_key_arn))
+    error_message = "signing_kms_key_arn must be a KMS key ARN."
+  }
+}
+
 variable "enhanced_scanning" {
   description = <<-EOT
     Turn on ECR enhanced (Inspector) continuous scanning for the platform prefix. Registry-scoped by construction, so

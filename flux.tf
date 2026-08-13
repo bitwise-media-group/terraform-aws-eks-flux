@@ -8,12 +8,17 @@
 # the empty-string convention so substitution never fails on an absent value;
 # manifests guard on empties.
 #
-# The keys are deliberately the GKE module's wherever the meaning is identical
+# The keys are deliberately cloud-neutral wherever the meaning is shared
 # (CLUSTER_NAME, SIGNED_IDENTITY_*, STACK_COMPONENTS, RBAC_GROUP_*, ...), so a
-# single manifests stack serves both clouds and branches only where it must —
+# single manifests stack serves every cloud and branches only where it must —
 # on CLOUD.
 
 locals {
+  # Which cosign mode verifies the platform artifacts: keyless (Fulcio
+  # identities) or a KMS signing key. var.signed_identity's validations
+  # guarantee exactly one.
+  signing_kms = var.signed_identity.kms_key_arn != null
+
   # Charts, tag listings and the sync artifact all pull straight from the
   # platform registry; pods pull mirrored images from the same place.
   container_registry = var.platform_registry.url
@@ -47,24 +52,28 @@ locals {
     # credentials from their Pod Identity association.
     OCI_PROVIDER = "aws"
 
-    # Cosign keyless verification identities (Go regexps over the Fulcio
-    # certificate): charts and mirrored images are signed by the
-    # flux-containers publish workflow; the OCIRepository verify blocks and the
-    # Kyverno image policy match these. Cloud-agnostic — the signer is GitHub.
-    SIGNED_IDENTITY_ISSUER = var.signed_identity.issuer
-    SIGNED_IDENTITY_CHARTS = var.signed_identity.containers_subject
-    SIGNED_IDENTITY_IMAGES = var.signed_identity.containers_subject
+    # Cosign verification, one mode or the other (the empty-string convention
+    # marks the inactive one). Keyless publishes the Fulcio identities (Go
+    # regexps): charts and mirrored images are signed by the flux-containers
+    # publish workflow; the OCIRepository verify blocks and the Kyverno image
+    # policy match these. KMS publishes the signing key's ARN instead, which
+    # Kyverno resolves as awskms:///<arn> and the OCIRepositories verify via
+    # the cosign-pub public-key Secret the bootstrap distributes.
+    SIGNED_IDENTITY_ISSUER  = local.signing_kms ? "" : var.signed_identity.issuer
+    SIGNED_IDENTITY_CHARTS  = local.signing_kms ? "" : var.signed_identity.containers_subject
+    SIGNED_IDENTITY_IMAGES  = local.signing_kms ? "" : var.signed_identity.containers_subject
+    SIGNED_IDENTITY_KMS_KEY = local.signing_kms ? var.signed_identity.kms_key_arn : ""
 
     # The stack's flux component (flux managing flux) re-renders the
     # FluxInstance this module bootstraps: it needs the manifests-artifact
     # signing subject for the sync verify patch, and the release channel for
     # sync.ref -- both otherwise trapped inside this module's helm values.
-    SIGNED_IDENTITY_MANIFESTS = var.signed_identity.manifests_subject
+    SIGNED_IDENTITY_MANIFESTS = local.signing_kms ? "" : var.signed_identity.manifests_subject
     FLUX_SYNC_CHANNEL         = var.flux.sync.ref
 
     # DNS/TLS surface (empty when var.dns.zone_name is unset). DNS_ZONE_ID is
     # the Route53 hosted zone id external-dns filters on; DNS_ZONE_NAME keeps
-    # the human-facing name for parity with the GKE contract.
+    # the human-facing name (the cloud-neutral key of the pair).
     DNS_ZONE_NAME = var.dns.zone_name != null ? var.dns.zone_name : ""
     DNS_ZONE_ID   = local.dns_zone_id != null ? local.dns_zone_id : ""
     DNS_DOMAIN    = var.dns.zone_name != null ? local.dns_domain : ""
@@ -104,10 +113,10 @@ locals {
       "none",
     )
 
-    # The Secrets Manager container holding the Workspace directory-reader
-    # credentials dex impersonates for group claims. On GKE this is a service
-    # account email resolved through Workload Identity; on EKS there is no such
-    # path, so the manifests mount the key from this secret instead.
+    # The Secrets Manager container holding the credentials for dex's upstream
+    # identity-provider connector; the manifests mount the key from this secret
+    # (it arrives out of band — see sso.tf). Empty when sso.directory_secret
+    # is off.
     DEX_DIRECTORY_SECRET = local.dex_directory_secret_name
 
     # --- Karpenter -------------------------------------------------------
@@ -138,15 +147,24 @@ locals {
     # The RBAC subject groups, one var per role key in rbac.groups
     # (RBAC_GROUP_VIEWERS, RBAC_GROUP_DEVELOPERS, RBAC_GROUP_DEVOPS,
     # RBAC_GROUP_ADMINS) — the manifests bind Role/ClusterRoleBindings on them;
-    # empty when the role is unbound or RBAC is off. On EKS these are the
-    # Kubernetes group names the access entries map their IAM principals onto,
-    # where on GKE they are Workspace group emails; the manifests neither know
-    # nor care.
+    # empty when the role is unbound or RBAC is off. These are the Kubernetes
+    # group names the access entries map their IAM principals onto; the
+    # manifests bind whatever names arrive and never see the subject type
+    # behind them.
     {
       for role, subject in var.rbac.groups :
       "RBAC_GROUP_${upper(role)}" => (var.rbac.enabled && subject != null) ? subject.group : ""
     },
   )
+}
+
+# The signing key's public half — cosign verification inside the cluster never
+# needs the private key, and Flux verifies against a public-key Secret rather
+# than calling KMS, so this is the only key material that travels.
+data "aws_kms_public_key" "signing" {
+  count = local.signing_kms ? 1 : 0
+
+  key_id = var.signed_identity.kms_key_arn
 }
 
 module "flux_operator" {
@@ -175,8 +193,9 @@ module "flux_operator" {
   }
 
   signed_identity = {
-    issuer            = var.signed_identity.issuer
-    manifests_subject = var.signed_identity.manifests_subject
+    issuer             = local.signing_kms ? null : var.signed_identity.issuer
+    manifests_subject  = local.signing_kms ? null : var.signed_identity.manifests_subject
+    kms_public_key_pem = one(data.aws_kms_public_key.signing[*].public_key_pem)
   }
 
   registry_arn                   = local.registry_arn

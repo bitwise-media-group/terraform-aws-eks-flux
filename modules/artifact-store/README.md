@@ -64,6 +64,7 @@ No modules.
 | organization\_paths | Optional aws:PrincipalOrgPaths patterns narrowing the pull-through grant to particular organizational units, e.g.<br/>["o-abc123/r-root/ou-workloads/*"]. Empty admits the whole organization. | `list(string)` | `[]` | no |
 | promotion\_environment | GitHub environment (protected, reviewer-gated) whose jobs may move the stable channel tag. | `string` | `"production"` | no |
 | repository\_prefix | ECR repository name prefix everything lands beneath: charts at <prefix>/charts/<name>, images at<br/><prefix>/images/<original-path>, and the manifests artifact at <prefix>/flux-manifests. The creation template is<br/>keyed on this prefix, so it is also what makes create-on-push work. | `string` | `"platform"` | no |
+| signing\_kms\_key\_arn | Asymmetric SIGN\_VERIFY KMS key the publish workflows sign artifacts with (cosign sign --key awskms:///<arn>),<br/>instead of keyless Fulcio identities. When set, both publisher roles get kms:Sign / kms:GetPublicKey /<br/>kms:DescribeKey on the key; feed the same ARN to the cluster module's signed\_identity.kms\_key\_arn so verification<br/>matches. Null keeps signing keyless (the signed\_identity\_subjects output). The key itself lives outside this<br/>module — signing identity should outlive any one store. | `string` | `null` | no |
 | tags | Tags applied to the IAM roles and to every repository the creation template makes. | `map(string)` | `{}` | no |
 | untagged\_expiry\_days | Days after which untagged manifests (failed/superseded pushes) are deleted. | `number` | `14` | no |
 
@@ -81,5 +82,6 @@ No modules.
 | registry\_host | Registry hostname for docker/helm/crane login (AWS/ecr get-login-password). |
 | registry\_id | Account id owning the registry — the upstream\_registry\_id a registry-cache module points at. |
 | repository\_prefix | The repository name prefix everything lands beneath, and the prefix the creation template is keyed on. |
-| signed\_identity\_subjects | Fulcio certificate-subject regexps for the publishing workflows — feed these to the cluster module's signed\_identity variable. Cloud-agnostic: the signer is GitHub, so these are identical to the GKE store's. |
+| signed\_identity\_subjects | Fulcio certificate-subject regexps for the publishing workflows (keyless mode) — feed these to the cluster module's signed\_identity variable. Cloud-agnostic: the signer is GitHub, not the hosting cloud. Irrelevant when signing\_kms\_key\_arn selects KMS signing. |
+| signing\_kms\_key\_arn | The KMS signing key the publishers sign with (null in keyless mode) — feed it to the cluster module's signed\_identity.kms\_key\_arn so verification matches. |
 <!-- END_TF_DOCS -->

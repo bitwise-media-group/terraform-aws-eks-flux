@@ -4,9 +4,8 @@
 # EKS Pod Identity associations for the flux-deployed platform workloads. The
 # namespace/service-account pairs are the terraform <-> flux-manifests contract
 # (overridable via var.workload_identity so this repo can track a manifests
-# change without a schema change) — the same contract the GKE module binds
-# direct Workload Identity Federation grants against, so both clouds consume
-# the same manifests.
+# change without a schema change) — the pairs themselves are cloud-neutral, so
+# every cluster consumes the same manifests.
 #
 # flux-system's own associations (source-controller, flux-operator) live in
 # modules/flux-operator/iam.tf next to the workloads they serve. Karpenter's
@@ -59,13 +58,14 @@ locals {
       }
     },
     # kyverno fetches image signatures from the registry at admission time, so
-    # its controllers read the platform registry like the flux controllers do.
+    # its controllers read the platform registry like the flux controllers do
+    # (plus the KMS verify grant when that is the signing mode).
     {
       for service_account in var.workload_identity.kyverno.service_accounts :
       "kyverno-${service_account}" => {
         namespace       = var.workload_identity.kyverno.namespace
         service_account = service_account
-        policy          = data.aws_iam_policy_document.registry_read.json
+        policy          = data.aws_iam_policy_document.kyverno.json
       }
     },
     # The KSAs the secrets-store-sync-controller runs as, one per consuming
@@ -241,6 +241,25 @@ data "aws_iam_policy_document" "registry_read" {
       ]
 
       resources = [local.registry_arn]
+    }
+  }
+}
+
+# kyverno's image policy verifies signatures at admission/report time: always
+# a registry reader, and in KMS signing mode also allowed to resolve the
+# signing key (cosign's awskms:///<arn> path fetches the public key and may
+# verify remotely).
+data "aws_iam_policy_document" "kyverno" {
+  source_policy_documents = [data.aws_iam_policy_document.registry_read.json]
+
+  dynamic "statement" {
+    for_each = local.signing_kms ? ["this"] : []
+
+    content {
+      sid       = "VerifySignatures"
+      effect    = "Allow"
+      actions   = ["kms:GetPublicKey", "kms:Verify"]
+      resources = [var.signed_identity.kms_key_arn]
     }
   }
 }
