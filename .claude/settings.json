@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "terraform@bitwise": true,
+    "workflow@bitwise": true
+  }
+}
