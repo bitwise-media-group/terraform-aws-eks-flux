@@ -94,10 +94,11 @@ variable "stack_components" {
 }
 
 variable "sso" {
-  description = "Platform SSO. When enabled the module creates the dex client pairs and the out-of-band container the Workspace directory-reader key must be written to."
+  description = "Platform SSO. When enabled the module creates the dex client pairs and the out-of-band container dex's upstream-connector credentials must be written to."
   type = object({
-    enabled         = optional(bool, false)
-    client_rotation = optional(map(number), {})
+    enabled          = optional(bool, false)
+    directory_secret = optional(bool, true)
+    client_rotation  = optional(map(number), {})
   })
   default = {}
 }

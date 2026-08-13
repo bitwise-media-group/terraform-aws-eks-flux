@@ -156,7 +156,7 @@ run "node_group_gates_on_cilium" {
 
   assert {
     condition     = aws_eks_node_group.system.node_repair_config[0].enabled == true
-    error_message = "node auto-repair must be on (the analogue of GKE's management.auto_repair)"
+    error_message = "node auto-repair must be on"
   }
 }
 
@@ -190,7 +190,7 @@ run "addon_set" {
 
   assert {
     condition     = contains(keys(aws_eks_addon.main), "aws-ebs-csi-driver") && contains(keys(aws_eks_addon.main), "snapshot-controller")
-    error_message = "EKS delegates CSI to add-ons where GKE ships it built in; both must be present by default"
+    error_message = "the EBS CSI driver and snapshot controller must be present by default"
   }
 
   assert {
@@ -245,7 +245,7 @@ run "cluster_vars_contract" {
   # fails on an absent value.
   assert {
     condition = alltrue([
-      for key in ["DNS_ZONE_NAME", "DNS_ZONE_ID", "DNS_DOMAIN", "PATCHY_DOMAIN", "ACME_EMAIL", "OTEL_AMP_ENDPOINT", "DEX_DIRECTORY_SECRET"] :
+      for key in ["DNS_ZONE_NAME", "DNS_ZONE_ID", "DNS_DOMAIN", "PATCHY_DOMAIN", "ACME_EMAIL", "OTEL_AMP_ENDPOINT", "DEX_DIRECTORY_SECRET", "SIGNED_IDENTITY_KMS_KEY"] :
       local.reserved_cluster_vars[key] == ""
     ])
     error_message = "unset optional surfaces must publish empty strings, not null"
@@ -264,6 +264,51 @@ run "cluster_vars_contract" {
   assert {
     condition     = local.reserved_cluster_vars.GATEWAY_NLB_TARGET_TYPE == "instance"
     error_message = "under a non-vpc-cni datapath the AWS Load Balancer Controller can only register instance targets"
+  }
+}
+
+run "kms_signing_mode" {
+  command = plan
+
+  variables {
+    signed_identity = {
+      kms_key_arn = "arn:aws:kms:eu-west-2:123456789012:key/1234abcd-12ab-4bcd-8def-1234567890ab"
+    }
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.SIGNED_IDENTITY_KMS_KEY == "arn:aws:kms:eu-west-2:123456789012:key/1234abcd-12ab-4bcd-8def-1234567890ab"
+    error_message = "KMS mode must publish the signing key ARN for the stack's awskms:/// verification"
+  }
+
+  # One mode or the other: the keyless identities go empty so the manifests'
+  # guards select the KMS path.
+  assert {
+    condition = alltrue([
+      for key in ["SIGNED_IDENTITY_ISSUER", "SIGNED_IDENTITY_CHARTS", "SIGNED_IDENTITY_IMAGES", "SIGNED_IDENTITY_MANIFESTS"] :
+      local.reserved_cluster_vars[key] == ""
+    ])
+    error_message = "the keyless identities must publish empty strings in KMS mode"
+  }
+
+  assert {
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.kyverno.statement :
+      statement.sid == "VerifySignatures" && contains(statement.actions, "kms:GetPublicKey")
+    ])
+    error_message = "kyverno's controllers must be able to resolve the signing key at admission time"
+  }
+}
+
+run "keyless_mode_gets_no_kms_grant" {
+  command = plan
+
+  assert {
+    condition = !anytrue([
+      for statement in data.aws_iam_policy_document.kyverno.statement :
+      statement.sid == "VerifySignatures"
+    ])
+    error_message = "keyless verification must grant no KMS access"
   }
 }
 
@@ -387,6 +432,38 @@ run "sso_surface" {
   }
 }
 
+run "sso_without_directory_secret" {
+  command = plan
+
+  variables {
+    dns = {
+      zone_name  = "patchy.bitwisemedia.co.uk"
+      acme_email = "platform@bitwisemedia.co.uk"
+    }
+    sso = {
+      enabled          = true
+      directory_secret = false
+    }
+  }
+
+  # An upstream connector that needs no out-of-band credential (e.g. a plain
+  # OIDC upstream configured entirely in the manifests) gets no container.
+  assert {
+    condition     = length(aws_secretsmanager_secret.dex_directory) == 0
+    error_message = "sso.directory_secret = false must create no connector-credential container"
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.DEX_DIRECTORY_SECRET == ""
+    error_message = "an absent connector-credential container must publish the empty string, not a dangling name"
+  }
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.dex_client) == 2
+    error_message = "the generated client pairs are independent of the connector credential"
+  }
+}
+
 run "rbac_access_entries" {
   command = plan
 
@@ -410,8 +487,7 @@ run "rbac_access_entries" {
     error_message = "the access entry maps the IAM principal onto the Kubernetes group the manifests bind"
   }
 
-  # The manifests bind group NAMES, exactly as they bind Workspace group emails
-  # on GKE — the subject type behind them is the only difference.
+  # The manifests bind group NAMES — never the IAM principals behind them.
   assert {
     condition     = local.reserved_cluster_vars.RBAC_GROUP_ADMINS == "platform:admins"
     error_message = "RBAC_GROUP_* must publish the Kubernetes group names, not the principal ARNs"

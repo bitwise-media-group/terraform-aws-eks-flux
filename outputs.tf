@@ -105,7 +105,7 @@ output "registry_reader_principals" {
 }
 
 output "sso" {
-  description = "SSO secrets this cluster owns (null unless sso.enabled): the generated dex client secrets, the composed config documents, and the out-of-band container the Workspace directory-reader key must be written to."
+  description = "SSO secrets this cluster owns (null unless sso.enabled): the generated dex client secrets, the composed config documents, and the out-of-band container dex's upstream-connector credentials must be written to (empty when sso.directory_secret is off)."
   value = var.sso.enabled ? {
     directory_secret = local.dex_directory_secret_name
     client_secrets   = { for client, secret in aws_secretsmanager_secret.dex_client : client => secret.name }

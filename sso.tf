@@ -23,12 +23,12 @@
 # requires the DNS surface (issuer and redirect URLs need the domain): an
 # unelected relying party gets no client, no secret, no grants.
 #
-# The one place this diverges from the GKE module: dex keeps its Google
-# Workspace connector so users and RBAC groups are identical across both
-# clouds, but EKS has no way to impersonate a Google service account. The
-# directory-reader key therefore arrives OUT OF BAND into the container created
-# below -- terraform owns the container and the accessor grant, never the
-# value.
+# dex federates to whatever upstream identity provider the manifests configure
+# its connector against; connectors that need a credential terraform cannot
+# mint (a directory-reader key for group claims, an upstream client secret)
+# receive it OUT OF BAND into the container created below (sso.directory_secret,
+# on by default) -- terraform owns the container and the accessor grant, never
+# the value.
 
 locals {
   # Normalized secret-name prefix (the variable is nullable; the empty-string
@@ -48,17 +48,18 @@ locals {
     } : {},
   ) : {}
 
-  dex_directory_secret_name = var.sso.enabled ? "${local.secret_prefix}dex-directory" : ""
+  dex_directory_secret_name = var.sso.enabled && var.sso.directory_secret ? "${local.secret_prefix}dex-directory" : ""
 }
 
-# The Workspace directory-reader credentials dex impersonates for group claims.
-# Terraform creates the container and the reader grant; the key JSON is written
-# out of band (a rotation there needs no apply here).
+# The upstream-connector credentials dex reads (a directory-reader key, an
+# upstream client secret — whatever the configured connector needs). Terraform
+# creates the container and the reader grant; the value is written out of band
+# (a rotation there needs no apply here).
 resource "aws_secretsmanager_secret" "dex_directory" {
-  count = var.sso.enabled ? 1 : 0
+  count = var.sso.enabled && var.sso.directory_secret ? 1 : 0
 
   name        = local.dex_directory_secret_name
-  description = "Google Workspace directory-reader credentials for dex (${var.name}) — value supplied out of band"
+  description = "Upstream identity-provider credentials for dex (${var.name}) — value supplied out of band"
 
   # No recovery window anywhere in this file: deleted secrets vanish
   # immediately rather than lingering in a 30-day scheduled-deletion state
@@ -134,10 +135,10 @@ resource "aws_secretsmanager_secret_version" "flux_web_auth_config" {
 
           # The groups claim drives the UI's Kubernetes impersonation, which
           # the RBAC_GROUP_* bindings (flux-manifests rbac component)
-          # authorize against -- dex resolves transitive Workspace membership,
-          # so the same group names work here and in kubectl. Scopes and
-          # expressions mirror the operator's own defaults, pinned so the RBAC
-          # contract survives upstream default drift.
+          # authorize against -- dex resolves group membership from its
+          # upstream provider, so the same group names work here and in
+          # kubectl. Scopes and expressions mirror the operator's own defaults,
+          # pinned so the RBAC contract survives upstream default drift.
           scopes = ["openid", "offline_access", "profile", "email", "groups"]
           impersonation = {
             username = "has(claims.email) ? claims.email : ''"
@@ -205,7 +206,7 @@ locals {
         roles = [for reader in readers : "secrets-${replace(reader, "/", "-")}"]
       }
     },
-    var.sso.enabled ? {
+    var.sso.enabled && var.sso.directory_secret ? {
       dex-directory = {
         arn   = aws_secretsmanager_secret.dex_directory[0].arn
         roles = ["secrets-dex-dex-secrets"]
