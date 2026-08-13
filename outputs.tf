@@ -69,7 +69,7 @@ output "dns" {
     zone_id      = local.dns_zone_id
     domain       = local.dns_domain
     host         = local.patchy_domain
-    name_servers = data.aws_route53_zone.cluster["this"].name_servers
+    name_servers = data.aws_route53_zone.cluster["true"].name_servers
   }
 }
 

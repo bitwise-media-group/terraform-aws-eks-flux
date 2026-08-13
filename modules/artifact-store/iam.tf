@@ -132,7 +132,7 @@ data "aws_iam_policy_document" "publisher" {
   # workflows, which needs Sign plus the public-key/metadata reads cosign
   # performs around it. Absent entirely in keyless mode.
   dynamic "statement" {
-    for_each = var.signing_kms_key_arn != null ? ["this"] : []
+    for_each = var.signing_kms_key_arn != null ? ["true"] : []
 
     content {
       sid    = "CosignSign"

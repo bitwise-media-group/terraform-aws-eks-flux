@@ -132,7 +132,7 @@ data "aws_iam_policy_document" "otel_collector" {
 
   # Only when a Managed Prometheus workspace is the metrics target.
   dynamic "statement" {
-    for_each = var.observability.amp_endpoint != null ? ["this"] : []
+    for_each = var.observability.amp_endpoint != null ? ["true"] : []
 
     content {
       sid       = "RemoteWrite"
@@ -228,7 +228,7 @@ data "aws_iam_policy_document" "registry_read" {
   # A pull-through cache materialises a repository on the FIRST pull of each
   # image, so every puller needs create/import as well as read.
   dynamic "statement" {
-    for_each = var.platform_registry.is_pull_through_cache ? ["this"] : []
+    for_each = var.platform_registry.is_pull_through_cache ? ["true"] : []
 
     content {
       sid    = "CacheFill"
@@ -253,7 +253,7 @@ data "aws_iam_policy_document" "kyverno" {
   source_policy_documents = [data.aws_iam_policy_document.registry_read.json]
 
   dynamic "statement" {
-    for_each = local.signing_kms ? ["this"] : []
+    for_each = local.signing_kms ? ["true"] : []
 
     content {
       sid       = "VerifySignatures"

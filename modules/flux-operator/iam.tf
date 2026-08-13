@@ -50,7 +50,7 @@ data "aws_iam_policy_document" "registry_read" {
   # controllers need create/import as well as read when the registry is a
   # cache rather than the store itself.
   dynamic "statement" {
-    for_each = var.registry_is_pull_through_cache ? ["this"] : []
+    for_each = var.registry_is_pull_through_cache ? ["true"] : []
 
     content {
       sid    = "CacheFill"

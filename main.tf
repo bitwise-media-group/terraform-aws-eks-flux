@@ -177,7 +177,7 @@ resource "aws_eks_cluster" "main" {
   enabled_cluster_log_types = var.cluster_log_types
 
   dynamic "encryption_config" {
-    for_each = var.encryption_kms_key_arn != null ? ["this"] : []
+    for_each = var.encryption_kms_key_arn != null ? ["true"] : []
 
     content {
       resources = ["secrets"]

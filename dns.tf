@@ -9,7 +9,7 @@
 # external-dns via cluster vars.
 
 data "aws_route53_zone" "cluster" {
-  for_each = toset(var.dns.zone_name != null ? ["this"] : [])
+  for_each = toset(var.dns.zone_name != null ? ["true"] : [])
 
   name         = "${trimsuffix(var.dns.zone_name, ".")}."
   private_zone = false
@@ -17,8 +17,8 @@ data "aws_route53_zone" "cluster" {
 
 locals {
   # Zone apex without the trailing dot (patchy.bitwisemedia.co.uk.).
-  dns_domain  = var.dns.zone_name != null ? trimsuffix(data.aws_route53_zone.cluster["this"].name, ".") : null
-  dns_zone_id = var.dns.zone_name != null ? data.aws_route53_zone.cluster["this"].zone_id : null
+  dns_domain  = var.dns.zone_name != null ? trimsuffix(data.aws_route53_zone.cluster["true"].name, ".") : null
+  dns_zone_id = var.dns.zone_name != null ? data.aws_route53_zone.cluster["true"].zone_id : null
 
   # The public host the patchy webhook is served on: the zone apex unless the
   # caller narrows it to a sub-host.
