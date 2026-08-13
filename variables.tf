@@ -61,15 +61,23 @@ variable "upgrade_policy" {
   }
 }
 
-variable "public_access_cidrs" {
+variable "public_access" {
   description = <<-EOT
-    CIDRs allowed to reach the public control-plane endpoint. Empty leaves it open to 0.0.0.0/0 (PoC posture) — constrain
-    it as soon as a stable egress CIDR exists. The private endpoint is always on, so in-VPC clients never traverse the
-    public one.
+    Public control-plane endpoint. Disabled by default, so the API is reachable only through the always-on private
+    endpoint. When enabled, cidrs constrains who may reach the public endpoint; empty leaves it open to 0.0.0.0/0
+    (PoC posture) — constrain it as soon as a stable egress CIDR exists.
   EOT
-  type        = set(string)
-  nullable    = false
-  default     = []
+  type = object({
+    enable = optional(bool, false)
+    cidrs  = optional(set(string), [])
+  })
+  nullable = false
+  default  = {}
+
+  validation {
+    condition     = var.public_access.enable || length(var.public_access.cidrs) == 0
+    error_message = "public_access.cidrs only applies when public_access.enable is true."
+  }
 }
 
 variable "cluster_log_types" {

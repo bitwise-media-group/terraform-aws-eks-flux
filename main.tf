@@ -152,11 +152,15 @@ resource "aws_eks_cluster" "main" {
     subnet_ids = var.network.node_subnet_ids
 
     # The private endpoint is always on so in-VPC clients (and the nodes) never
-    # traverse the public one; the public endpoint stays reachable so terraform
-    # and helm bootstrap works from CI and workstations without a VPN path.
+    # traverse the public one; the public endpoint is opt-in for terraform and
+    # helm bootstrap from CI and workstations without a VPN path.
     endpoint_private_access = true
-    endpoint_public_access  = true
-    public_access_cidrs     = length(var.public_access_cidrs) > 0 ? var.public_access_cidrs : ["0.0.0.0/0"]
+    endpoint_public_access  = var.public_access.enable
+    public_access_cidrs = (
+      var.public_access.enable
+      ? (length(var.public_access.cidrs) > 0 ? var.public_access.cidrs : ["0.0.0.0/0"])
+      : null
+    )
   }
 
   access_config {

@@ -49,10 +49,13 @@ variable "acme_email" {
   type        = string
 }
 
-variable "public_access_cidrs" {
-  description = "CIDRs allowed to reach the public control-plane endpoint; empty leaves it open."
-  type        = set(string)
-  default     = []
+variable "public_access" {
+  description = "Public control-plane endpoint. Enabled here because terraform and helm bootstrap run from outside the VPC; set cidrs to constrain who may reach it, or enable = false when applying from inside the VPC."
+  type = object({
+    enable = optional(bool, false)
+    cidrs  = optional(set(string), [])
+  })
+  default = { enable = true }
 }
 
 variable "rbac" {

@@ -73,7 +73,7 @@ module "cluster" {
     reserve_static_ip = true
   }
 
-  public_access_cidrs = var.public_access_cidrs
+  public_access = var.public_access
 
   # IAM Identity Center permission-set roles mapped onto the Kubernetes groups
   # flux-manifests' rbac component binds against.

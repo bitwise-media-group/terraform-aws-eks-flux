@@ -94,8 +94,44 @@ run "cluster_shape" {
   }
 
   assert {
+    condition     = aws_eks_cluster.main.vpc_config[0].endpoint_public_access == false
+    error_message = "the public endpoint must stay off unless public_access.enable opts in"
+  }
+
+  assert {
     condition     = contains(aws_eks_cluster.main.enabled_cluster_log_types, "audit")
     error_message = "control-plane audit logs must ship to CloudWatch"
+  }
+}
+
+run "public_access_open_when_unconstrained" {
+  command = plan
+
+  variables {
+    public_access = { enable = true }
+  }
+
+  assert {
+    condition     = aws_eks_cluster.main.vpc_config[0].endpoint_public_access == true
+    error_message = "public_access.enable must turn the public endpoint on"
+  }
+
+  assert {
+    condition     = aws_eks_cluster.main.vpc_config[0].public_access_cidrs == toset(["0.0.0.0/0"])
+    error_message = "an enabled public endpoint with no cidrs must fall back to 0.0.0.0/0 (PoC posture)"
+  }
+}
+
+run "public_access_constrained_to_cidrs" {
+  command = plan
+
+  variables {
+    public_access = { enable = true, cidrs = ["203.0.113.0/24"] }
+  }
+
+  assert {
+    condition     = aws_eks_cluster.main.vpc_config[0].public_access_cidrs == toset(["203.0.113.0/24"])
+    error_message = "public_access.cidrs must constrain the public endpoint"
   }
 }
 
