@@ -68,6 +68,17 @@ locals {
         policy          = data.aws_iam_policy_document.kyverno.json
       }
     },
+    # patchy's egress-broker terminates all claude-runner model traffic; only
+    # the bedrock provider needs cloud credentials (anthropic uses an API key
+    # or OAuth token the broker gets out of band), so the grant exists exactly
+    # when the provider is bedrock.
+    var.patchy.claude.provider.name != "bedrock" ? {} : {
+      patchy-egress-broker = {
+        namespace       = var.workload_identity.patchy_egress_broker.namespace
+        service_account = var.workload_identity.patchy_egress_broker.service_account
+        policy          = data.aws_iam_policy_document.bedrock_invoke[0].json
+      }
+    },
     # The KSAs the secrets-store-sync-controller runs as, one per consuming
     # namespace: the pairs the SSO surface implies (derived in sso.tf from the
     # election) plus any extras the caller names. Scoped to this cluster's
@@ -261,6 +272,30 @@ data "aws_iam_policy_document" "kyverno" {
       actions   = ["kms:GetPublicKey", "kms:Verify"]
       resources = [var.signed_identity.kms_key_arn]
     }
+  }
+}
+
+# The egress-broker's Bedrock invoke grant, Anthropic models only. The
+# foundation-model ARN is region-wildcarded because cross-region inference
+# profiles invoke foundation models in sibling regions of the profile's geo
+# (and foundation-model ARNs carry an empty account field); the
+# inference-profile ARN stays pinned to this cluster's region and account.
+data "aws_iam_policy_document" "bedrock_invoke" {
+  count = var.patchy.claude.provider.name == "bedrock" ? 1 : 0
+
+  statement {
+    sid    = "InvokeAnthropicModels"
+    effect = "Allow"
+
+    actions = [
+      "bedrock:InvokeModel",
+      "bedrock:InvokeModelWithResponseStream",
+    ]
+
+    resources = [
+      "arn:${local.partition}:bedrock:*::foundation-model/anthropic.*",
+      "arn:${local.partition}:bedrock:${data.aws_region.current.region}:${local.account_id}:inference-profile/*.anthropic.*",
+    ]
   }
 }
 

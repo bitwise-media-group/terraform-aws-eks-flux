@@ -106,6 +106,22 @@ variable "sso" {
   default = {}
 }
 
+variable "patchy" {
+  description = "Patchy platform knobs: the model provider its egress-broker proxies claude-runner traffic to, published as the CLAUDE_* cluster vars."
+  type = object({
+    claude = optional(object({
+      provider = optional(object({
+        name                  = optional(string, "anthropic")
+        anthropic_auth        = optional(string, "token")
+        bedrock_region        = optional(string)
+        bedrock_region_prefix = optional(string)
+        model_map             = optional(map(string), {})
+      }), {})
+    }), {})
+  })
+  default = {}
+}
+
 variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)

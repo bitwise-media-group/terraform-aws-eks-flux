@@ -29,6 +29,8 @@ locals {
 
   node_pool = local.karpenter_node_pool
 
+  claude_provider = var.patchy.claude.provider
+
   # Values every cluster publishes to flux-manifests, merged OVER any
   # caller-provided extras (reserved keys always win).
   reserved_cluster_vars = merge({
@@ -143,6 +145,24 @@ locals {
     KARPENTER_CONSOLIDATION_POLICY = local.node_pool.consolidation_policy
     KARPENTER_CONSOLIDATE_AFTER    = local.node_pool.consolidate_after
     KARPENTER_EXPIRE_AFTER         = local.node_pool.expire_after
+
+    # --- Claude model provider (patchy's egress-broker) ------------------
+    # The broker terminates all claude-runner model traffic and proxies it to
+    # this provider. Keys are harness-scoped (CLAUDE_*, so codex/copilot could
+    # later publish CODEX_* siblings) and the knobs provider-prefixed
+    # (BEDROCK_REGION, never a generic REGION) — clarity over brevity,
+    # mirroring the broker's own PATCHY_BEDROCK_* env names. The vertex pair
+    # exists so the contract is identical on every cloud; on AWS it is always
+    # empty (vertex needs GCP ambient credentials the broker cannot get here).
+    CLAUDE_PROVIDER              = local.claude_provider.name
+    CLAUDE_ANTHROPIC_AUTH        = local.claude_provider.anthropic_auth
+    CLAUDE_BEDROCK_REGION        = local.claude_provider.name == "bedrock" ? coalesce(local.claude_provider.bedrock_region, data.aws_region.current.region) : ""
+    CLAUDE_BEDROCK_REGION_PREFIX = local.claude_provider.bedrock_region_prefix != null ? local.claude_provider.bedrock_region_prefix : ""
+    CLAUDE_VERTEX_REGION         = ""
+    CLAUDE_VERTEX_PROJECT_ID     = ""
+    # canonical=providerID pairs, comma-joined sorted — the same flat-string
+    # list pattern KARPENTER_* and STACK_COMPONENTS already prove.
+    CLAUDE_MODEL_MAP = join(",", [for k in sort(keys(local.claude_provider.model_map)) : "${k}=${local.claude_provider.model_map[k]}"])
     },
     # The RBAC subject groups, one var per role key in rbac.groups
     # (RBAC_GROUP_VIEWERS, RBAC_GROUP_DEVELOPERS, RBAC_GROUP_DEVOPS,

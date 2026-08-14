@@ -301,6 +301,61 @@ run "cluster_vars_contract" {
     condition     = local.reserved_cluster_vars.GATEWAY_NLB_TARGET_TYPE == "instance"
     error_message = "under a non-vpc-cni datapath the AWS Load Balancer Controller can only register instance targets"
   }
+
+  # The claude runner's model provider (patchy's egress-broker) defaults to
+  # first-party Anthropic with OAuth-token auth.
+  assert {
+    condition     = local.reserved_cluster_vars.CLAUDE_PROVIDER == "anthropic"
+    error_message = "the claude provider must default to first-party anthropic"
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.CLAUDE_ANTHROPIC_AUTH == "token"
+    error_message = "anthropic auth must default to token (OAuth), not an API key"
+  }
+
+  assert {
+    condition = alltrue([
+      for key in ["CLAUDE_BEDROCK_REGION", "CLAUDE_BEDROCK_REGION_PREFIX", "CLAUDE_VERTEX_REGION", "CLAUDE_VERTEX_PROJECT_ID", "CLAUDE_MODEL_MAP"] :
+      local.reserved_cluster_vars[key] == ""
+    ])
+    error_message = "provider knobs that do not apply must publish empty strings, not null"
+  }
+}
+
+run "claude_bedrock_provider" {
+  command = plan
+
+  variables {
+    patchy = {
+      claude = {
+        provider = {
+          name = "bedrock"
+          model_map = {
+            "anthropic/claude-opus-5"   = "us.anthropic.claude-opus-5"
+            "anthropic/claude-sonnet-5" = "us.anthropic.claude-sonnet-5"
+          }
+        }
+      }
+    }
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.CLAUDE_BEDROCK_REGION == "eu-west-2"
+    error_message = "an unset bedrock_region must fall back to the cluster's own region, never an empty string"
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.CLAUDE_MODEL_MAP == "anthropic/claude-opus-5=us.anthropic.claude-opus-5,anthropic/claude-sonnet-5=us.anthropic.claude-sonnet-5"
+    error_message = "the model map arrives as comma-joined sorted canonical=providerID pairs — the flat-string list pattern the stack already proves"
+  }
+
+  # bedrock is the one provider needing cloud credentials, so it alone brings
+  # the broker's invoke grant with it.
+  assert {
+    condition     = contains(keys(local.workload_grants), "patchy-egress-broker")
+    error_message = "the bedrock provider must grant the egress-broker's KSA Bedrock invoke permissions"
+  }
 }
 
 run "kms_signing_mode" {

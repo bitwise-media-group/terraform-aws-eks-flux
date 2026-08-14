@@ -432,6 +432,12 @@ variable "workload_identity" {
       namespace       = optional(string, "kube-system")
       service_account = optional(string, "karpenter")
     }), {})
+    # patchy's egress-broker terminates all claude-runner model traffic; when
+    # patchy.claude.provider is bedrock its KSA carries the Bedrock invoke grant
+    patchy_egress_broker = optional(object({
+      namespace       = optional(string, "patchy")
+      service_account = optional(string, "patchy-egress-broker")
+    }), {})
     # the KSAs the secrets-store-sync-controller runs as when materialising each
     # consumer's SecretSync objects
     secret_readers = optional(list(object({
@@ -488,6 +494,53 @@ variable "stack_components" {
       for component in var.stack_components : contains(["flux-web", "patchy"], component)
     ])
     error_message = "stack_components entries must be optional-tier short names: flux-web, patchy (dex rides the sso toggle)."
+  }
+}
+
+variable "patchy" {
+  description = <<-EOT
+    Patchy platform knobs. claude.provider configures the model provider patchy's egress-broker terminates all
+    claude-runner traffic against, published as the CLAUDE_* cluster vars (CLAUDE_PROVIDER, CLAUDE_ANTHROPIC_AUTH,
+    CLAUDE_BEDROCK_REGION, CLAUDE_BEDROCK_REGION_PREFIX, CLAUDE_VERTEX_REGION, CLAUDE_VERTEX_PROJECT_ID,
+    CLAUDE_MODEL_MAP). Keys are harness-scoped (CLAUDE_*, not a generic PROVIDER_*) and the knobs provider-prefixed
+    (bedrock_region, not a bare region) — clarity over brevity, mirroring the broker's own PATCHY_BEDROCK_* env names.
+    When the provider is bedrock the broker's KSA additionally gets the Bedrock invoke grant (iam.tf).
+  EOT
+  type = object({
+    # Harness-scoped: the model provider belongs to the claude runner alone.
+    # A future codex/copilot provider surface slots in as a sibling key
+    # (patchy.codex.provider) without renaming anything here.
+    claude = optional(object({
+      provider = optional(object({
+        name                  = optional(string, "anthropic") # anthropic | bedrock
+        anthropic_auth        = optional(string, "token")     # key | token
+        bedrock_region        = optional(string)              # defaults to the cluster region
+        bedrock_region_prefix = optional(string)              # inference-profile geo prefix (us/eu/apac)
+        model_map             = optional(map(string), {})     # canonical id -> provider model id
+      }), {})
+    }), {})
+  })
+  default  = {}
+  nullable = false
+
+  validation {
+    condition     = contains(["anthropic", "bedrock"], var.patchy.claude.provider.name)
+    error_message = "patchy.claude.provider.name must be anthropic or bedrock (vertex needs GCP ambient credentials the broker cannot get on EKS; foundry is deliberately unsupported for now)."
+  }
+
+  validation {
+    condition     = contains(["key", "token"], var.patchy.claude.provider.anthropic_auth)
+    error_message = "patchy.claude.provider.anthropic_auth must be key or token."
+  }
+
+  validation {
+    condition     = var.patchy.claude.provider.name == "bedrock" || var.patchy.claude.provider.bedrock_region == null
+    error_message = "patchy.claude.provider.bedrock_region only applies when the provider is bedrock."
+  }
+
+  validation {
+    condition     = var.patchy.claude.provider.name == "bedrock" || var.patchy.claude.provider.bedrock_region_prefix == null
+    error_message = "patchy.claude.provider.bedrock_region_prefix only applies when the provider is bedrock."
   }
 }
 

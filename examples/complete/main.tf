@@ -113,6 +113,11 @@ module "cluster" {
   stack_components = var.stack_components
   sso              = var.sso
 
+  # The model provider patchy's egress-broker proxies claude-runner traffic to,
+  # published as the CLAUDE_* cluster vars (bedrock additionally grants the
+  # broker's KSA Bedrock invoke permissions).
+  patchy = var.patchy
+
   flux = {
     sync = {
       # this environment tracks the staging channel; production consumers track
