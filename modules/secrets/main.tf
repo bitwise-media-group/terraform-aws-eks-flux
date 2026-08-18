@@ -23,9 +23,11 @@
 # AWS principals, so the policy cannot land before the cluster and breaks
 # (principals reduce to orphaned unique ids) every time it churns.
 #
-# The dex connector credential is absent by design: on AWS its container
-# (DEX_DIRECTORY_SECRET) is authored by the cluster module, which composes
-# the config document referencing it in the same apply.
+# The dex connector credentials ride the same sso declarations the cluster
+# module publishes as DEX_CONNECTORS: pass the cluster module's sso value
+# verbatim and each connector's secrets fields become dex-<id>-<field>
+# containers here, in the durable root -- an upstream OAuth client outlives
+# any one cluster, so its credentials must too.
 
 locals {
   prefix = var.secret_prefix != null ? var.secret_prefix : ""
@@ -62,6 +64,14 @@ locals {
     local.patchy && contains(var.agent_harnesses, "copilot") ? {
       patchy-copilot-token = "The Copilot CLI's fine-grained GitHub token (no repository permissions)"
     } : {},
+
+    # Per-connector out-of-band credentials (arbitrary SSO federation): one
+    # container per (connector, field) pair declared in sso.connectors.
+    var.sso.enabled ? merge([
+      for id, connector in var.sso.connectors : {
+        for field in connector.secrets : "dex-${id}-${field}" => "The ${field} credential for dex's ${id} connector"
+      }
+    ]...) : {},
   )
 }
 

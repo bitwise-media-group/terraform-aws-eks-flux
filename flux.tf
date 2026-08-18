@@ -122,11 +122,15 @@ locals {
     # empty string would re-trigger the manifests' claude := default.
     AGENT_HARNESSES = coalesce(join(",", sort(var.patchy.harnesses)), "none")
 
-    # The Secrets Manager container holding the credentials for dex's upstream
-    # identity-provider connector; the manifests mount the key from this secret
-    # (it arrives out of band — see sso.tf). Empty when sso.directory_secret
-    # is off.
-    DEX_DIRECTORY_SECRET = local.dex_directory_secret_name
+    # Arbitrary SSO federation: the non-secret half of each connector,
+    # JSON-encoded since a cluster var is a flat string. Defaults to "[]"
+    # rather than "" (unlike the rest of this map's empty-string convention)
+    # because the manifests unconditionally mustFromJson-parse it. The
+    # credential containers the manifests sync alongside it are derived from
+    # the same local (sso.tf), so the id/field naming cannot drift.
+    DEX_CONNECTORS = var.sso.enabled ? jsonencode([
+      for id, c in local.dex_connectors : merge({ id = id }, c)
+    ]) : "[]"
 
     # --- Karpenter -------------------------------------------------------
     # Wiring the component needs to render its EC2NodeClass/NodePool.

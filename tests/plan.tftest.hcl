@@ -281,10 +281,15 @@ run "cluster_vars_contract" {
   # fails on an absent value.
   assert {
     condition = alltrue([
-      for key in ["DNS_ZONE_NAME", "DNS_ZONE_ID", "DNS_DOMAIN", "PATCHY_DOMAIN", "ACME_EMAIL", "OTEL_AMP_ENDPOINT", "DEX_DIRECTORY_SECRET", "SIGNED_IDENTITY_KMS_KEY"] :
+      for key in ["DNS_ZONE_NAME", "DNS_ZONE_ID", "DNS_DOMAIN", "PATCHY_DOMAIN", "ACME_EMAIL", "OTEL_AMP_ENDPOINT", "SIGNED_IDENTITY_KMS_KEY"] :
       local.reserved_cluster_vars[key] == ""
     ])
     error_message = "unset optional surfaces must publish empty strings, not null"
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.DEX_CONNECTORS == "[]"
+    error_message = "without sso, DEX_CONNECTORS must publish the empty JSON array (not the empty string -- the manifests unconditionally mustFromJson-parse it)"
   }
 
   assert {
@@ -543,6 +548,14 @@ run "sso_surface" {
     }
     sso = {
       enabled = true
+      connectors = {
+        google = {
+          type = "google"
+          config = {
+            clientID = "$GOOGLE_CLIENT_ID"
+          }
+        }
+      }
     }
     secret_prefix = "patchy-x-"
   }
@@ -553,8 +566,28 @@ run "sso_surface" {
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.DEX_DIRECTORY_SECRET == "patchy-x-dex-directory"
-    error_message = "the directory-reader secret name must carry the cluster's secret prefix"
+    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.id][0] == "google"
+    error_message = "DEX_CONNECTORS must publish the declared connector id"
+  }
+
+  assert {
+    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.name][0] == "google"
+    error_message = "an unset connector name must default to the connector id"
+  }
+
+  assert {
+    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.config.redirectURI][0] == "https://dex.patchy.bitwisemedia.co.uk/callback"
+    error_message = "a connector with no explicit redirectURI must get the shared callback endpoint injected"
+  }
+
+  assert {
+    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.config.clientID][0] == "$GOOGLE_CLIENT_ID"
+    error_message = "explicit connector config must pass through verbatim alongside the injected redirectURI"
+  }
+
+  assert {
+    condition     = toset([for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.secrets][0]) == toset(["client-id", "client-secret"])
+    error_message = "an unset connector secrets set must default to the client-id/client-secret pair"
   }
 
   assert {
@@ -573,7 +606,7 @@ run "sso_surface" {
   }
 }
 
-run "sso_without_directory_secret" {
+run "sso_connector_mechanism_is_generic" {
   command = plan
 
   variables {
@@ -582,27 +615,52 @@ run "sso_without_directory_secret" {
       acme_email = "platform@bitwisemedia.co.uk"
     }
     sso = {
-      enabled          = true
-      directory_secret = false
+      enabled = true
+      connectors = {
+        okta = {
+          type    = "oidc"
+          name    = "Okta"
+          secrets = ["client-id", "client-secret", "api-token"]
+        }
+      }
     }
   }
 
-  # An upstream connector that needs no out-of-band credential (e.g. a plain
-  # OIDC upstream configured entirely in the manifests) gets no container.
+  # The credential containers themselves live in modules/secrets (a durable
+  # root, fed the same sso value) -- this run asserts only the cluster-side
+  # half: the published declarations and the unchanged generated pairs.
   assert {
-    condition     = length(aws_secretsmanager_secret.dex_directory) == 0
-    error_message = "sso.directory_secret = false must create no connector-credential container"
+    condition = toset([for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.secrets][0]) == toset([
+      "client-id", "client-secret", "api-token"
+    ])
+    error_message = "an explicit secrets set must publish verbatim -- modules/secrets names the dex-<id>-<field> containers from it"
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.DEX_DIRECTORY_SECRET == ""
-    error_message = "an absent connector-credential container must publish the empty string, not a dangling name"
+    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.name][0] == "Okta"
+    error_message = "an explicit connector name must pass through to DEX_CONNECTORS untouched"
   }
 
   assert {
     condition     = length(aws_secretsmanager_secret.dex_client) == 2
-    error_message = "the generated client pairs are independent of the connector credential"
+    error_message = "the generated client pairs are independent of the connector declarations"
   }
+}
+
+run "sso_requires_connectors" {
+  command = plan
+
+  variables {
+    dns = {
+      zone_name  = "patchy.bitwisemedia.co.uk"
+      acme_email = "platform@bitwisemedia.co.uk"
+    }
+    sso = {
+      enabled = true
+    }
+  }
+
+  expect_failures = [var.sso]
 }
 
 run "rbac_access_entries" {

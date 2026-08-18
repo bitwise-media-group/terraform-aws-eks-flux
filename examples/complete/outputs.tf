@@ -31,6 +31,6 @@ output "cluster_vars" {
 }
 
 output "sso" {
-  description = "SSO secrets this cluster owns — note directory_secret, whose value must be written out of band."
+  description = "SSO secrets this cluster owns: the generated dex client pairs and composed config documents."
   value       = module.cluster.sso
 }

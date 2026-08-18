@@ -23,12 +23,15 @@
 # requires the DNS surface (issuer and redirect URLs need the domain): an
 # unelected relying party gets no client, no secret, no grants.
 #
-# dex federates to whatever upstream identity provider the manifests configure
-# its connector against; connectors that need a credential terraform cannot
-# mint (a directory-reader key for group claims, an upstream client secret)
-# receive it OUT OF BAND into the container created below (sso.directory_secret,
-# on by default) -- terraform owns the container and the accessor grant, never
-# the value.
+# dex federates to whatever upstream identity providers sso.connectors
+# declares; local.dex_connectors normalizes those declarations (defaulting
+# name, injecting a shared redirectURI) into the shape flux.tf publishes as
+# DEX_CONNECTORS. The dex-<id>-<field> credential containers those
+# declarations imply live in modules/secrets, instantiated in a durable
+# root and fed the same sso value verbatim -- an upstream OAuth client
+# outlives any one cluster, so its out-of-band credentials must too. The
+# prefix-scoped reader roles (iam.tf) make them readable here the moment
+# the cluster exists.
 
 locals {
   # Normalized secret-name prefix (the variable is nullable; the empty-string
@@ -48,25 +51,19 @@ locals {
     } : {},
   ) : {}
 
-  dex_directory_secret_name = var.sso.enabled && var.sso.directory_secret ? "${local.secret_prefix}dex-directory" : ""
-}
-
-# The upstream-connector credentials dex reads (a directory-reader key, an
-# upstream client secret — whatever the configured connector needs). Terraform
-# creates the container and the reader grant; the value is written out of band
-# (a rotation there needs no apply here).
-resource "aws_secretsmanager_secret" "dex_directory" {
-  count = var.sso.enabled && var.sso.directory_secret ? 1 : 0
-
-  name        = local.dex_directory_secret_name
-  description = "Upstream identity-provider credentials for dex (${var.name}) — value supplied out of band"
-
-  # No recovery window anywhere in this file: deleted secrets vanish
-  # immediately rather than lingering in a 30-day scheduled-deletion state
-  # that would block recreating the cluster under the same names.
-  recovery_window_in_days = 0
-
-  tags = var.tags
+  # The normalized connector list dex's config renders from (flux.tf) and
+  # modules/secrets names its credential containers from. Every dex connector
+  # shares the same callback endpoint; inject it as a default so callers don't
+  # have to repeat their own domain, but let an explicit config.redirectURI
+  # win.
+  dex_connectors = var.sso.enabled ? {
+    for id, c in var.sso.connectors : id => {
+      type    = c.type
+      name    = coalesce(c.name, id)
+      secrets = c.secrets
+      config  = merge({ redirectURI = "https://dex.${local.patchy_domain}/callback" }, c.config)
+    }
+  } : {}
 }
 
 # The generated client secrets. Ephemeral: re-opened every run, persisted
@@ -82,8 +79,12 @@ ephemeral "random_password" "dex_client" {
 resource "aws_secretsmanager_secret" "dex_client" {
   for_each = local.dex_client_readers
 
-  name                    = "${local.secret_prefix}dex-client-${each.key}"
-  description             = "dex OAuth2 client secret for ${each.key} (${var.name})"
+  name        = "${local.secret_prefix}dex-client-${each.key}"
+  description = "dex OAuth2 client secret for ${each.key} (${var.name})"
+
+  # No recovery window anywhere in this file: deleted secrets vanish
+  # immediately rather than lingering in a 30-day scheduled-deletion state
+  # that would block recreating the cluster under the same names.
   recovery_window_in_days = 0
 
   tags = var.tags
@@ -206,12 +207,6 @@ locals {
         roles = [for reader in readers : "secrets-${replace(reader, "/", "-")}"]
       }
     },
-    var.sso.enabled && var.sso.directory_secret ? {
-      dex-directory = {
-        arn   = aws_secretsmanager_secret.dex_directory[0].arn
-        roles = ["secrets-dex-dex-secrets"]
-      }
-    } : {},
     contains(keys(local.dex_client_readers), "flux-web") ? {
       flux-web-auth-config = {
         arn   = aws_secretsmanager_secret.flux_web_auth_config[0].arn

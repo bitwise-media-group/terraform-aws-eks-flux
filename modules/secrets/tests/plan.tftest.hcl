@@ -82,6 +82,71 @@ run "no_patchy_no_secrets" {
 
   assert {
     condition     = length(aws_secretsmanager_secret.main) == 0
-    error_message = "without the patchy component there is no out-of-band credential to hold (dex's rides in the cluster module on AWS)"
+    error_message = "without the patchy component (and without sso) there is no out-of-band credential to hold"
+  }
+}
+
+run "sso_adds_dex_connector_credentials" {
+  command = plan
+
+  variables {
+    stack_components = []
+    sso = {
+      enabled = true
+      connectors = {
+        google = {
+          type    = "google"
+          secrets = ["client-id", "client-secret", "admin-email"]
+        }
+      }
+    }
+  }
+
+  assert {
+    condition     = sort(keys(aws_secretsmanager_secret.main)) == tolist(["dex-google-admin-email", "dex-google-client-id", "dex-google-client-secret"])
+    error_message = "each declared connector secrets field must create exactly one dex-<id>-<field> container"
+  }
+}
+
+run "sso_connector_mechanism_is_generic" {
+  command = plan
+
+  variables {
+    stack_components = []
+    sso = {
+      enabled = true
+      connectors = {
+        okta = { type = "oidc" }
+      }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for name in ["dex-okta-client-id", "dex-okta-client-secret"] :
+      contains(keys(aws_secretsmanager_secret.main), name)
+    ])
+    error_message = "a non-google connector id must create the same dex-<id>-<field> container shape as google, defaulting to the client-id/client-secret pair"
+  }
+
+  assert {
+    condition     = !contains(keys(aws_secretsmanager_secret.main), "dex-google-client-id")
+    error_message = "a connector not declared in sso.connectors must create no container -- no connector exists by default"
+  }
+}
+
+run "sso_enabled_no_connectors_no_containers" {
+  command = plan
+
+  variables {
+    stack_components = []
+    sso = {
+      enabled = true
+    }
+  }
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.main) == 0
+    error_message = "sso.enabled alone (no connectors) must create no dex credential containers -- no connector exists by default"
   }
 }

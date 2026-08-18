@@ -97,11 +97,16 @@ variable "stack_components" {
 }
 
 variable "sso" {
-  description = "Platform SSO. When enabled the module creates the dex client pairs and the out-of-band container dex's upstream-connector credentials must be written to."
+  description = "Platform SSO (module sso input): deploys dex and wires elected relying parties to it. connectors declares the upstream identity provider(s) (arbitrary dex connectors, keyed by id); each connector's secrets fields become out-of-band dex-<id>-<field> containers. client_rotation bumps mint new client secrets."
   type = object({
-    enabled          = optional(bool, false)
-    directory_secret = optional(bool, true)
-    client_rotation  = optional(map(number), {})
+    enabled = optional(bool, false)
+    connectors = optional(map(object({
+      type    = string
+      name    = optional(string)
+      config  = optional(map(any), {})
+      secrets = optional(set(string), ["client-id", "client-secret"])
+    })), {})
+    client_rotation = optional(map(number), {})
   })
   default = {}
 }
