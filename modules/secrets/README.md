@@ -1,0 +1,53 @@
+# secrets
+
+The out-of-band credential secrets the flux-manifests stack syncs into the cluster (Secrets Store CSI driver +
+secrets-store-sync-controller). This is the terraform half of the secret-sync contract — the manifests'
+`SecretProviderClass`/`SecretSync` objects are the other half — so the secret names and election gating live here,
+versioned with the module release that tracks those manifests, instead of being hand-mirrored (and drifting) in every
+caller.
+
+Instantiate it from a **durable** root, not beside the cluster: the secret *versions* are added out of band
+(`aws secretsmanager put-secret-value` — never terraform state) and must survive cluster destroy/recreate with no
+manual re-entry.
+
+**Containers only, deliberately no grants** — the inverse of the GKE sibling module. On EKS the read grant is
+identity-side: the cluster module creates the sync KSAs' Pod Identity reader roles with
+`GetSecretValue`/`DescribeSecret` scoped to `${SECRET_PREFIX}*` (`iam.tf`), so these secrets become readable the
+moment the cluster exists. A durable-root resource policy naming those per-cluster role principals would invert the
+lifecycle: `PutResourcePolicy` validates AWS principals, so the policy could not land before the cluster and would
+break (principals reduce to orphaned unique ids) every time it churns. The dex connector credential is also absent by
+design — on AWS its container (`DEX_DIRECTORY_SECRET`) is authored by the cluster module, which composes the config
+document referencing it in the same apply.
+
+Pass the same election values as the cluster module call (`stack_components`, `patchy.harnesses`,
+`patchy.claude.provider.name`, `secret_prefix`); the module then creates exactly the secrets that cluster shape syncs:
+
+| Secret | Created when | Holds |
+| --- | --- | --- |
+| `patchy-github-app-id` | `patchy` elected | The patchy GitHub App's numeric id |
+| `patchy-github-app-private-key` | `patchy` elected | The App's private key (PEM) |
+| `patchy-webhook-secret` | `patchy` elected | The App's webhook secret |
+| `patchy-anthropic-token` | + `claude` harness on `anthropic` | `claude setup-token` OAuth token (or an API key, per the chart's `anthropicAuth`) |
+| `patchy-openai-token` | + `codex` harness | OpenAI platform API key |
+| `patchy-copilot-token` | + `copilot` harness | Fine-grained GitHub token with **no** repository permissions |
+
+After the first apply, add a version to every secret:
+
+```sh
+aws secretsmanager put-secret-value --secret-id <name> --secret-string file://...
+```
+
+## Usage
+
+```hcl
+module "secrets" {
+  source = "github.com/bitwise-media-group/terraform-aws-eks-flux//modules/secrets"
+
+  # Mirror the cluster module call in the (separate, disposable) cluster root.
+  agent_harnesses = ["claude"]
+  claude_provider = "anthropic"
+}
+```
+
+<!-- BEGIN_TF_DOCS -->
+<!-- END_TF_DOCS -->

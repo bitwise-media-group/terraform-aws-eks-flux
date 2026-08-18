@@ -1,0 +1,80 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+variable "secret_prefix" {
+  description = <<-EOT
+    Prefix for every secret name, matching the cluster module's secret_prefix input (the manifests sync
+    <prefix><name>, so the two must move together — and the cluster module's reader roles scope their read grant to
+    the same prefix). Lets multiple clusters share one account with distinct secrets -- each cluster then needs its
+    own prefixed set and fresh out-of-band versions. Include the trailing separator (e.g. 'patchy-x-'); null keeps
+    the unprefixed names.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.secret_prefix == null || can(regex("^[A-Za-z0-9/_+=.@-]*$", var.secret_prefix))
+    error_message = "secret_prefix must use Secrets Manager name characters only ([A-Za-z0-9/_+=.@-])."
+  }
+}
+
+variable "stack_components" {
+  description = <<-EOT
+    The flux-manifests optional-tier components the cluster elects -- pass the cluster module's stack_components
+    value. Only patchy carries out-of-band credentials: electing it creates the GitHub App secrets plus the elected
+    harnesses' model credentials; flux-web is accepted for symmetric passing and creates nothing. There is no dex
+    entry to gate on: on AWS the dex connector's out-of-band container (DEX_DIRECTORY_SECRET) is authored by the
+    cluster module itself.
+  EOT
+  type        = set(string)
+  nullable    = false
+  default     = ["flux-web", "patchy"]
+
+  validation {
+    condition = alltrue([
+      for component in var.stack_components : contains(["flux-web", "patchy"], component)
+    ])
+    error_message = "stack_components entries must be optional-tier short names: flux-web, patchy."
+  }
+}
+
+variable "agent_harnesses" {
+  description = <<-EOT
+    The agent harnesses the cluster elects -- pass the cluster module's patchy.harnesses value (published to the
+    manifests as AGENT_HARNESSES). Each harness brings its credential secret: claude's rides claude_provider
+    (anthropic only), codex adds patchy-openai-token, copilot adds patchy-copilot-token.
+  EOT
+  type        = set(string)
+  nullable    = false
+  default     = ["claude"]
+
+  validation {
+    condition = alltrue([
+      for harness in var.agent_harnesses : contains(["claude", "codex", "copilot"], harness)
+    ])
+    error_message = "agent_harnesses entries must be harness short names: claude, codex, copilot."
+  }
+}
+
+variable "claude_provider" {
+  description = <<-EOT
+    The claude runner's model provider -- pass the cluster module's patchy.claude.provider.name value. Only anthropic
+    needs a credential secret (patchy-anthropic-token); a bedrock cluster's egress broker authenticates with its Pod
+    Identity and gets none.
+  EOT
+  type        = string
+  nullable    = false
+  default     = "anthropic"
+
+  validation {
+    condition     = contains(["anthropic", "bedrock"], var.claude_provider)
+    error_message = "claude_provider must be anthropic or bedrock, matching the cluster module's patchy.claude.provider.name."
+  }
+}
+
+variable "tags" {
+  description = "Tags applied to every secret."
+  type        = map(string)
+  nullable    = false
+  default     = {}
+}
