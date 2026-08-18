@@ -96,12 +96,13 @@ locals {
     # The KSAs the secrets-store-sync-controller runs as, one per consuming
     # namespace: the pairs the SSO surface implies (derived in sso.tf from the
     # election), the pairs the patchy election implies (above), plus any
-    # extras the caller names -- duplicates collapse on the key. Scoped to
-    # this cluster's SECRET_PREFIX so clusters sharing an account cannot read
-    # each other's secrets; each module-authored secret's own policy (sso.tf)
-    # narrows it further.
+    # extras the caller names -- setunion(), because the derivations overlap
+    # (SSO + patchy both imply patchy/patchy-secrets) and a for-expression
+    # errors on a duplicate key. Scoped to this cluster's SECRET_PREFIX so
+    # clusters sharing an account cannot read each other's secrets; each
+    # module-authored secret's own policy (sso.tf) narrows it further.
     {
-      for reader in concat(local.sso_secret_readers, local.patchy_secret_readers, var.workload_identity.secret_readers) :
+      for reader in setunion(local.sso_secret_readers, local.patchy_secret_readers, var.workload_identity.secret_readers) :
       "secrets-${reader.namespace}-${reader.service_account}" => {
         namespace       = reader.namespace
         service_account = reader.service_account
