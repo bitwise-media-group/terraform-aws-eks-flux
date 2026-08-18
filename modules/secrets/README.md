@@ -50,4 +50,42 @@ module "secrets" {
 ```
 
 <!-- BEGIN_TF_DOCS -->
+## Requirements
+
+| Name | Version |
+| ---- | ------- |
+| terraform | >= 1.11, < 2.0 |
+| aws | >= 6.0, < 7.0 |
+
+## Providers
+
+| Name | Version |
+| ---- | ------- |
+| aws | >= 6.0, < 7.0 |
+
+## Modules
+
+No modules.
+
+## Resources
+
+| Name | Type |
+| ---- | ---- |
+| [aws_secretsmanager_secret.main](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| agent\_harnesses | The agent harnesses the cluster elects -- pass the cluster module's patchy.harnesses value (published to the<br/>manifests as AGENT\_HARNESSES). Each harness brings its credential secret: claude's rides claude\_provider<br/>(anthropic only), codex adds patchy-openai-token, copilot adds patchy-copilot-token. | `set(string)` | <pre>[<br/>  "claude"<br/>]</pre> | no |
+| claude\_provider | The claude runner's model provider -- pass the cluster module's patchy.claude.provider.name value. Only anthropic<br/>needs a credential secret (patchy-anthropic-token); a bedrock cluster's egress broker authenticates with its Pod<br/>Identity and gets none. | `string` | `"anthropic"` | no |
+| secret\_prefix | Prefix for every secret name, matching the cluster module's secret\_prefix input (the manifests sync<br/><prefix><name>, so the two must move together — and the cluster module's reader roles scope their read grant to<br/>the same prefix). Lets multiple clusters share one account with distinct secrets -- each cluster then needs its<br/>own prefixed set and fresh out-of-band versions. Include the trailing separator (e.g. 'patchy-x-'); null keeps<br/>the unprefixed names. | `string` | `null` | no |
+| stack\_components | The flux-manifests optional-tier components the cluster elects -- pass the cluster module's stack\_components<br/>value. Only patchy carries out-of-band credentials: electing it creates the GitHub App secrets plus the elected<br/>harnesses' model credentials; flux-web is accepted for symmetric passing and creates nothing. There is no dex<br/>entry to gate on: on AWS the dex connector's out-of-band container (DEX\_DIRECTORY\_SECRET) is authored by the<br/>cluster module itself. | `set(string)` | <pre>[<br/>  "flux-web",<br/>  "patchy"<br/>]</pre> | no |
+| tags | Tags applied to every secret. | `map(string)` | `{}` | no |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| secrets | The created secrets, keyed by unprefixed name: the ARN and the (prefixed) Secrets Manager name, for wiring further<br/>IAM in the caller (e.g. a maintainer's PutSecretValue rotation grant). Every secret's versions are added out of<br/>band: aws secretsmanager put-secret-value --secret-id <name>. |
 <!-- END_TF_DOCS -->

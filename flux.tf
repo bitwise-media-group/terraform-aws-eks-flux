@@ -115,6 +115,13 @@ locals {
       "none",
     )
 
+    # The agent-harness election, gating the patchy chart's runners and the
+    # harness credential syncs; modules/secrets creates the matching secrets
+    # from the same value, and iam.tf derives the sync KSAs' reader roles
+    # from it. Same reserved name "none" convention as STACK_COMPONENTS: an
+    # empty string would re-trigger the manifests' claude := default.
+    AGENT_HARNESSES = coalesce(join(",", sort(var.patchy.harnesses)), "none")
+
     # The Secrets Manager container holding the credentials for dex's upstream
     # identity-provider connector; the manifests mount the key from this secret
     # (it arrives out of band — see sso.tf). Empty when sso.directory_secret

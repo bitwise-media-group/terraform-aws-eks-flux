@@ -438,8 +438,9 @@ variable "workload_identity" {
       namespace       = optional(string, "patchy")
       service_account = optional(string, "patchy-egress-broker")
     }), {})
-    # the KSAs the secrets-store-sync-controller runs as when materialising each
-    # consumer's SecretSync objects
+    # extra KSAs the secrets-store-sync-controller runs as when materialising
+    # a consumer's SecretSync objects, beyond the pairs the SSO surface and
+    # the patchy election already derive (sso.tf / iam.tf)
     secret_readers = optional(list(object({
       namespace       = string
       service_account = string
@@ -464,9 +465,9 @@ variable "observability" {
 variable "secret_prefix" {
   description = <<-EOT
     Prefix for every Secrets Manager secret name the manifests stack syncs, published as the SECRET_PREFIX cluster var.
-    Lets multiple clusters share one account with distinct secrets; the secrets and their accessor grants created
-    upstream must use the same prefix. Include the trailing separator (e.g. 'patchy-x-'); empty keeps the unprefixed
-    names.
+    Lets multiple clusters share one account with distinct secrets; the modules/secrets instantiation (a durable
+    root, holding the out-of-band credential secrets) must create them under the same prefix. Include the trailing
+    separator (e.g. 'patchy-x-'); empty keeps the unprefixed names.
   EOT
   type        = string
   default     = null
@@ -499,7 +500,10 @@ variable "stack_components" {
 
 variable "patchy" {
   description = <<-EOT
-    Patchy platform knobs. claude.provider configures the model provider patchy's egress-broker terminates all
+    Patchy platform knobs. harnesses elects the agent harnesses the cluster runs, published as the AGENT_HARNESSES
+    cluster var -- it gates the chart's per-harness runners, the harness credential syncs, and the derived
+    secret-reader Pod Identity roles (iam.tf); create the matching credential secrets with modules/secrets (same
+    value there). claude.provider configures the model provider patchy's egress-broker terminates all
     claude-runner traffic against, published as the CLAUDE_* cluster vars (CLAUDE_PROVIDER, CLAUDE_ANTHROPIC_AUTH,
     CLAUDE_BEDROCK_REGION, CLAUDE_BEDROCK_REGION_PREFIX, CLAUDE_VERTEX_REGION, CLAUDE_VERTEX_PROJECT_ID,
     CLAUDE_MODEL_MAP). Keys are harness-scoped (CLAUDE_*, not a generic PROVIDER_*) and the knobs provider-prefixed
@@ -507,6 +511,8 @@ variable "patchy" {
     When the provider is bedrock the broker's KSA additionally gets the Bedrock invoke grant (iam.tf).
   EOT
   type = object({
+    harnesses = optional(set(string), ["claude"])
+
     # Harness-scoped: the model provider belongs to the claude runner alone.
     # A future codex/copilot provider surface slots in as a sibling key
     # (patchy.codex.provider) without renaming anything here.
@@ -522,6 +528,13 @@ variable "patchy" {
   })
   default  = {}
   nullable = false
+
+  validation {
+    condition = alltrue([
+      for harness in var.patchy.harnesses : contains(["claude", "codex", "copilot"], harness)
+    ])
+    error_message = "patchy.harnesses entries must be harness short names: claude, codex, copilot."
+  }
 
   validation {
     condition     = contains(["anthropic", "bedrock"], var.patchy.claude.provider.name)

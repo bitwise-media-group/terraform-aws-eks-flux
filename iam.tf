@@ -28,6 +28,20 @@ locals {
 
   secret_arn_pattern = "arn:${local.partition}:secretsmanager:${data.aws_region.current.region}:${local.account_id}:secret:${local.secret_prefix}*"
 
+  # The sync KSAs the patchy component's out-of-band secret syncs imply,
+  # derived from the election the same way sso.tf derives the SSO pairs (the
+  # secrets themselves live upstream, in a durable modules/secrets root): the
+  # patchy-namespace reader exists with the component (the GitHub App sync is
+  # unconditional, and the egress broker's anthropic token rides the same
+  # KSA); the agent-namespace reader only when a non-brokered harness
+  # (codex/copilot) mounts its credential into the agent pods.
+  patchy_secret_readers = concat(
+    contains(var.stack_components, "patchy") ? [{ namespace = "patchy", service_account = "patchy-secrets" }] : [],
+    contains(var.stack_components, "patchy") && length(setintersection(var.patchy.harnesses, ["codex", "copilot"])) > 0 ? [
+      { namespace = "patchy-agents", service_account = "patchy-secrets" }
+    ] : [],
+  )
+
   # name -> { namespace, service_account, policy }. Every entry becomes one IAM
   # role, one inline policy and one Pod Identity association.
   workload_grants = merge(
@@ -81,11 +95,13 @@ locals {
     },
     # The KSAs the secrets-store-sync-controller runs as, one per consuming
     # namespace: the pairs the SSO surface implies (derived in sso.tf from the
-    # election) plus any extras the caller names. Scoped to this cluster's
-    # SECRET_PREFIX so clusters sharing an account cannot read each other's
-    # secrets; each secret's own policy (sso.tf) narrows it further.
+    # election), the pairs the patchy election implies (above), plus any
+    # extras the caller names -- duplicates collapse on the key. Scoped to
+    # this cluster's SECRET_PREFIX so clusters sharing an account cannot read
+    # each other's secrets; each module-authored secret's own policy (sso.tf)
+    # narrows it further.
     {
-      for reader in concat(local.sso_secret_readers, var.workload_identity.secret_readers) :
+      for reader in concat(local.sso_secret_readers, local.patchy_secret_readers, var.workload_identity.secret_readers) :
       "secrets-${reader.namespace}-${reader.service_account}" => {
         namespace       = reader.namespace
         service_account = reader.service_account

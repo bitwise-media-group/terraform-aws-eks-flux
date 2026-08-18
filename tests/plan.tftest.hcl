@@ -293,6 +293,21 @@ run "cluster_vars_contract" {
   }
 
   assert {
+    condition     = local.reserved_cluster_vars.AGENT_HARNESSES == "claude"
+    error_message = "the default harness election must publish claude alone"
+  }
+
+  assert {
+    condition     = contains(keys(local.workload_grants), "secrets-patchy-patchy-secrets")
+    error_message = "electing patchy must derive the patchy-namespace secret-reader identity (the GitHub App and anthropic syncs) rather than requiring the caller to list it"
+  }
+
+  assert {
+    condition     = !contains(keys(local.workload_grants), "secrets-patchy-agents-patchy-secrets")
+    error_message = "the brokered claude harness mounts no credential into agent pods: no agent-namespace reader may exist by default"
+  }
+
+  assert {
     condition     = local.reserved_cluster_vars.SIGNED_IDENTITY_MANIFESTS == var.signed_identity.manifests_subject
     error_message = "the manifests signing subject must reach the stack: its flux component re-renders the FluxInstance and needs it for the sync verify patch"
   }
@@ -320,6 +335,41 @@ run "cluster_vars_contract" {
       local.reserved_cluster_vars[key] == ""
     ])
     error_message = "provider knobs that do not apply must publish empty strings, not null"
+  }
+}
+
+run "agent_harness_election" {
+  command = plan
+
+  variables {
+    patchy = {
+      harnesses = ["copilot", "claude"]
+    }
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.AGENT_HARNESSES == "claude,copilot"
+    error_message = "the harness election must publish sorted and comma-joined, like STACK_COMPONENTS"
+  }
+
+  assert {
+    condition     = contains(keys(local.workload_grants), "secrets-patchy-agents-patchy-secrets")
+    error_message = "a non-brokered harness mounts its credential into agent pods, so its election must derive the agent-namespace secret reader"
+  }
+}
+
+run "agent_harness_election_empty" {
+  command = plan
+
+  variables {
+    patchy = {
+      harnesses = []
+    }
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.AGENT_HARNESSES == "none"
+    error_message = "an empty election must publish the reserved name none -- an empty string would re-trigger the manifests' claude := default"
   }
 }
 
