@@ -93,11 +93,9 @@ run "sso_adds_dex_connector_credentials" {
     stack_components = []
     sso = {
       enabled = true
-      connectors = {
-        google = {
-          type    = "google"
-          secrets = ["client-id", "client-secret", "admin-email"]
-        }
+      connector = {
+        type    = "google"
+        secrets = ["client-id", "client-secret", "admin-email"]
       }
     }
   }
@@ -114,10 +112,8 @@ run "sso_connector_mechanism_is_generic" {
   variables {
     stack_components = []
     sso = {
-      enabled = true
-      connectors = {
-        okta = { type = "oidc" }
-      }
+      enabled   = true
+      connector = { id = "okta", type = "oidc" }
     }
   }
 
@@ -131,11 +127,11 @@ run "sso_connector_mechanism_is_generic" {
 
   assert {
     condition     = !contains(keys(aws_secretsmanager_secret.main), "dex-google-client-id")
-    error_message = "a connector not declared in sso.connectors must create no container -- no connector exists by default"
+    error_message = "a connector not declared in sso.connector must create no container -- no connector exists by default"
   }
 }
 
-run "sso_enabled_no_connectors_no_containers" {
+run "sso_enabled_no_connector_no_containers" {
   command = plan
 
   variables {
@@ -147,6 +143,6 @@ run "sso_enabled_no_connectors_no_containers" {
 
   assert {
     condition     = length(aws_secretsmanager_secret.main) == 0
-    error_message = "sso.enabled alone (no connectors) must create no dex credential containers -- no connector exists by default"
+    error_message = "sso.enabled alone (no connector) must create no dex credential containers -- no connector exists by default"
   }
 }

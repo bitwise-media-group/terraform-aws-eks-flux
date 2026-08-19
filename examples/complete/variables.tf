@@ -97,16 +97,19 @@ variable "stack_components" {
 }
 
 variable "sso" {
-  description = "Platform SSO (module sso input): deploys dex and wires elected relying parties to it. connectors declares the upstream identity provider(s) (arbitrary dex connectors, keyed by id); each connector's secrets fields become out-of-band dex-<id>-<field> containers. client_rotation bumps mint new client secrets."
+  description = "Platform SSO (module sso input): deploys dex and wires elected relying parties to it. connector declares the deployment's single upstream identity provider (an arbitrary dex connector; id defaults to type); its secrets fields become out-of-band dex-<id>-<field> containers. clients[*].version bumps mint new client secrets."
   type = object({
     enabled = optional(bool, false)
-    connectors = optional(map(object({
+    connector = optional(object({
+      id      = optional(string)
       type    = string
       name    = optional(string)
-      config  = optional(map(any), {})
+      config  = optional(any, {})
       secrets = optional(set(string), ["client-id", "client-secret"])
+    }))
+    clients = optional(map(object({
+      version = number
     })), {})
-    client_rotation = optional(map(number), {})
   })
   default = {}
 }

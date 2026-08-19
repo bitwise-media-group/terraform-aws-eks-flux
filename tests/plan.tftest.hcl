@@ -548,13 +548,15 @@ run "sso_surface" {
     }
     sso = {
       enabled = true
-      connectors = {
-        google = {
-          type = "google"
-          config = {
-            clientID = "$GOOGLE_CLIENT_ID"
-          }
+      connector = {
+        type = "google"
+        config = {
+          clientID                       = "$GOOGLE_CLIENT_ID"
+          fetchTransitiveGroupMembership = true
         }
+      }
+      clients = {
+        flux-web = { version = 3 }
       }
     }
     secret_prefix = "patchy-x-"
@@ -567,7 +569,7 @@ run "sso_surface" {
 
   assert {
     condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.id][0] == "google"
-    error_message = "DEX_CONNECTORS must publish the declared connector id"
+    error_message = "an unset connector id must default to the connector type"
   }
 
   assert {
@@ -585,6 +587,16 @@ run "sso_surface" {
     error_message = "explicit connector config must pass through verbatim alongside the injected redirectURI"
   }
 
+  # Regression guard for the map(any) footgun: config typed as map(any)
+  # unifies its value types and stringifies bools ("true"), which dex then
+  # rejects at startup (cannot unmarshal string into bool). Bare any on a
+  # single connector object faces no unification -- see the sso variable's
+  # type comment.
+  assert {
+    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.config.fetchTransitiveGroupMembership][0] == true
+    error_message = "connector config values must keep their native JSON types -- a bool must publish as true, not the string \"true\""
+  }
+
   assert {
     condition     = toset([for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.secrets][0]) == toset(["client-id", "client-secret"])
     error_message = "an unset connector secrets set must default to the client-id/client-secret pair"
@@ -593,6 +605,16 @@ run "sso_surface" {
   assert {
     condition     = length(aws_secretsmanager_secret.dex_client) == 2
     error_message = "both elected relying parties must get a generated client pair"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret_version.dex_client["flux-web"].secret_string_wo_version == 3 && aws_secretsmanager_secret_version.flux_web_auth_config[0].secret_string_wo_version == 3
+    error_message = "a client's version must drive both the raw secret and the composed config document, so a bump rotates the pair together"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret_version.dex_client["patchy-status"].secret_string_wo_version == 1
+    error_message = "a client absent from sso.clients must sit at version 1"
   }
 
   assert {
@@ -616,24 +638,28 @@ run "sso_connector_mechanism_is_generic" {
     }
     sso = {
       enabled = true
-      connectors = {
-        okta = {
-          type    = "oidc"
-          name    = "Okta"
-          secrets = ["client-id", "client-secret", "api-token"]
-        }
+      connector = {
+        id      = "okta"
+        type    = "oidc"
+        name    = "Okta"
+        secrets = ["client-id", "client-secret", "api-token"]
       }
     }
   }
 
   # The credential containers themselves live in modules/secrets (a durable
   # root, fed the same sso value) -- this run asserts only the cluster-side
-  # half: the published declarations and the unchanged generated pairs.
+  # half: the published declaration and the unchanged generated pairs.
   assert {
     condition = toset([for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.secrets][0]) == toset([
       "client-id", "client-secret", "api-token"
     ])
     error_message = "an explicit secrets set must publish verbatim -- modules/secrets names the dex-<id>-<field> containers from it"
+  }
+
+  assert {
+    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CONNECTORS) : c.id][0] == "okta"
+    error_message = "an explicit connector id must win over the type default"
   }
 
   assert {
@@ -647,7 +673,7 @@ run "sso_connector_mechanism_is_generic" {
   }
 }
 
-run "sso_requires_connectors" {
+run "sso_requires_connector" {
   command = plan
 
   variables {
@@ -657,6 +683,20 @@ run "sso_requires_connectors" {
     }
     sso = {
       enabled = true
+    }
+  }
+
+  expect_failures = [var.sso]
+}
+
+run "sso_clients_reject_unknown_ids" {
+  command = plan
+
+  variables {
+    sso = {
+      clients = {
+        dex = { version = 2 }
+      }
     }
   }
 

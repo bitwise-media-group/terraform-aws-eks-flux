@@ -65,13 +65,14 @@ locals {
       patchy-copilot-token = "The Copilot CLI's fine-grained GitHub token (no repository permissions)"
     } : {},
 
-    # Per-connector out-of-band credentials (arbitrary SSO federation): one
-    # container per (connector, field) pair declared in sso.connectors.
-    var.sso.enabled ? merge([
-      for id, connector in var.sso.connectors : {
-        for field in connector.secrets : "dex-${id}-${field}" => "The ${field} credential for dex's ${id} connector"
-      }
-    ]...) : {},
+    # The connector's out-of-band credentials (arbitrary SSO federation):
+    # one container per field declared in sso.connector.secrets, named by
+    # the effective id (defaulting to type, matching the cluster module's
+    # sso.tf).
+    var.sso.enabled && var.sso.connector != null ? {
+      for field in var.sso.connector.secrets :
+      "dex-${coalesce(var.sso.connector.id, var.sso.connector.type)}-${field}" => "The ${field} credential for dex's ${coalesce(var.sso.connector.id, var.sso.connector.type)} connector"
+    } : {},
   )
 }
 

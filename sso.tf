@@ -23,15 +23,16 @@
 # requires the DNS surface (issuer and redirect URLs need the domain): an
 # unelected relying party gets no client, no secret, no grants.
 #
-# dex federates to whatever upstream identity providers sso.connectors
-# declares; local.dex_connectors normalizes those declarations (defaulting
-# name, injecting a shared redirectURI) into the shape flux.tf publishes as
-# DEX_CONNECTORS. The dex-<id>-<field> credential containers those
-# declarations imply live in modules/secrets, instantiated in a durable
-# root and fed the same sso value verbatim -- an upstream OAuth client
-# outlives any one cluster, so its out-of-band credentials must too. The
-# prefix-scoped reader roles (iam.tf) make them readable here the moment
-# the cluster exists.
+# dex federates to whatever upstream identity provider sso.connector
+# declares; local.dex_connectors normalizes that declaration (defaulting
+# id and name, injecting a shared redirectURI) into the shape flux.tf
+# publishes as DEX_CONNECTORS. The dex-<id>-<field> credential containers
+# the declaration implies live in modules/secrets, instantiated in a
+# durable root and fed the same sso value verbatim (applying the same
+# id-defaults-to-type rule, so the naming cannot drift) -- an upstream
+# OAuth client outlives any one cluster, so its out-of-band credentials
+# must too. The prefix-scoped reader roles (iam.tf) make them readable
+# here the moment the cluster exists.
 
 locals {
   # Normalized secret-name prefix (the variable is nullable; the empty-string
@@ -51,24 +52,28 @@ locals {
     } : {},
   ) : {}
 
-  # The normalized connector list dex's config renders from (flux.tf) and
-  # modules/secrets names its credential containers from. Every dex connector
-  # shares the same callback endpoint; inject it as a default so callers don't
+  # The normalized connector dex's config renders from (flux.tf), kept as
+  # a one-entry map keyed by the effective id so the published
+  # DEX_CONNECTORS JSON array -- and the manifests ranging over it -- is
+  # unchanged from the map-shaped variable days. The connector shares the
+  # cluster's callback endpoint; inject it as a default so callers don't
   # have to repeat their own domain, but let an explicit config.redirectURI
   # win.
+  dex_connector_id = var.sso.connector != null ? coalesce(var.sso.connector.id, var.sso.connector.type) : null
+
   dex_connectors = var.sso.enabled ? {
-    for id, c in var.sso.connectors : id => {
-      type    = c.type
-      name    = coalesce(c.name, id)
-      secrets = c.secrets
-      config  = merge({ redirectURI = "https://dex.${local.patchy_domain}/callback" }, c.config)
+    (local.dex_connector_id) = {
+      type    = var.sso.connector.type
+      name    = coalesce(var.sso.connector.name, local.dex_connector_id)
+      secrets = var.sso.connector.secrets
+      config  = merge({ redirectURI = "https://dex.${local.patchy_domain}/callback" }, var.sso.connector.config)
     }
   } : {}
 }
 
 # The generated client secrets. Ephemeral: re-opened every run, persisted
 # nowhere; the write-only versions below only consume a fresh result when their
-# rotation number (sso.client_rotation) moves.
+# rotation number (sso.clients[*].version) moves.
 ephemeral "random_password" "dex_client" {
   for_each = local.dex_client_readers
 
@@ -99,7 +104,7 @@ resource "aws_secretsmanager_secret_version" "dex_client" {
   # or a plan file. Bumping the rotation counter is what re-reads the ephemeral
   # password.
   secret_string_wo         = ephemeral.random_password.dex_client[each.key].result
-  secret_string_wo_version = lookup(var.sso.client_rotation, each.key, 1)
+  secret_string_wo_version = try(var.sso.clients[each.key].version, 1)
 }
 
 # The Flux status web UI's Web Config API document, client secret embedded.
@@ -149,7 +154,7 @@ resource "aws_secretsmanager_secret_version" "flux_web_auth_config" {
       }
     }
   })
-  secret_string_wo_version = lookup(var.sso.client_rotation, "flux-web", 1)
+  secret_string_wo_version = try(var.sso.clients["flux-web"].version, 1)
 }
 
 # The patchy status server's auth config document: secretless (clientSecretFile
