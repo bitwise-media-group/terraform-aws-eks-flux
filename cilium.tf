@@ -122,7 +122,7 @@ resource "aws_iam_role" "cilium_operator" {
   count = var.cilium.operator_pod_identity ? 1 : 0
 
   name               = "${var.name}-cilium-operator"
-  description        = "Cilium operator (${var.name}) — ENI attachment and address management"
+  description        = "Cilium operator (${var.name}) - ENI attachment and address management"
   assume_role_policy = data.aws_iam_policy_document.pod_identity_assume_role.json
 
   tags = var.tags

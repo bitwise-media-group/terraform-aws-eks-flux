@@ -71,7 +71,7 @@ resource "aws_iam_role" "flux" {
   for_each = toset(["source-controller", "flux-operator"])
 
   name               = "${var.cluster_name}-${each.value}"
-  description        = "Flux ${each.value} (${var.cluster_name}) — platform registry read"
+  description        = "Flux ${each.value} (${var.cluster_name}) - platform registry read"
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
 
   tags = var.tags

@@ -74,7 +74,7 @@ data "aws_iam_policy_document" "node_assume_role" {
 
 resource "aws_iam_role" "nodes" {
   name               = "${var.name}-nodes"
-  description        = "EKS nodes (${var.name}) — kubelet, ECR pulls and the Cilium ENI datapath"
+  description        = "EKS nodes (${var.name}) - kubelet, ECR pulls and the Cilium ENI datapath"
   assume_role_policy = data.aws_iam_policy_document.node_assume_role.json
 
   tags = var.tags
