@@ -51,8 +51,12 @@ locals {
     PLATFORM_REGISTRY  = var.platform_registry.url
     CONTAINER_REGISTRY = local.container_registry
     # OCIRepository registry auth: the flux controllers resolve ECR
-    # credentials from their Pod Identity association.
-    OCI_PROVIDER = "aws"
+    # credentials from their Pod Identity association. ARTIFACT_TAG_PROVIDER
+    # is the same election for the ResourceSetInputProviders' tag listing —
+    # a flux-operator RSIP type name, since the manifests cannot derive it
+    # from OCI_PROVIDER inside a substitution.
+    OCI_PROVIDER          = "aws"
+    ARTIFACT_TAG_PROVIDER = "ECRArtifactTag"
 
     # Cosign verification, one mode or the other (the empty-string convention
     # marks the inactive one). Keyless publishes the Fulcio identities (Go

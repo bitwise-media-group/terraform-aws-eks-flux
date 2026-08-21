@@ -278,8 +278,8 @@ run "cluster_vars_contract" {
   command = plan
 
   assert {
-    condition     = local.reserved_cluster_vars.CLOUD == "aws" && local.reserved_cluster_vars.OCI_PROVIDER == "aws"
-    error_message = "the stack branches on CLOUD, and the flux controllers resolve ECR credentials via the aws OCI provider"
+    condition     = local.reserved_cluster_vars.CLOUD == "aws" && local.reserved_cluster_vars.OCI_PROVIDER == "aws" && local.reserved_cluster_vars.ARTIFACT_TAG_PROVIDER == "ECRArtifactTag"
+    error_message = "the stack branches on CLOUD, and the flux controllers resolve ECR credentials via the aws OCI provider and the ECRArtifactTag RSIP type"
   }
 
   assert {
