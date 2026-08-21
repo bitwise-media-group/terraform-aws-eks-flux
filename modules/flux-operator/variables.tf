@@ -57,7 +57,7 @@ variable "sync" {
   type = object({
     url      = string # oci://<registry>/flux-manifests
     ref      = string # channel tag (stable, staging) or exact version
-    path     = string # stack (the single entrypoint all clusters share)
+    path     = string # the per-cloud entrypoint tree ("aws" for this module)
     interval = optional(string, "5m")
   })
   nullable = false

@@ -666,7 +666,8 @@ variable "flux" {
   description = <<-EOT
     Flux bootstrap knobs. Chart repositories, the distribution registry and the sync url default onto platform_registry;
     sync.ref picks the release channel (stable, staging, or edge for dev clusters tracking trunk -- pair edge with the
-    manifests_edge signing subject).
+    manifests_edge signing subject); sync.path selects the manifests' per-cloud entrypoint tree ("aws" -- requires
+    flux-manifests >= 3.0.0, whose artifact ships the aws/google/common trees).
   EOT
   type = object({
     operator_chart = optional(object({
@@ -685,7 +686,7 @@ variable "flux" {
     sync = optional(object({
       url      = optional(string)
       ref      = optional(string, "stable")
-      path     = optional(string, "stack")
+      path     = optional(string, "aws")
       interval = optional(string, "5m")
     }), {})
     kustomize_patches = optional(list(any), [])

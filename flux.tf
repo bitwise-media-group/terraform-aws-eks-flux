@@ -9,9 +9,9 @@
 # manifests guard on empties.
 #
 # The keys are deliberately cloud-neutral wherever the meaning is shared
-# (CLUSTER_NAME, SIGNED_IDENTITY_*, STACK_COMPONENTS, RBAC_GROUP_*, ...), so a
-# single manifests stack serves every cloud and branches only where it must —
-# on CLOUD.
+# (CLUSTER_NAME, SIGNED_IDENTITY_*, STACK_COMPONENTS, RBAC_GROUP_*, ...); the
+# manifests are per-cloud trees (flux.sync.path selects "aws"), so aws-only
+# facts publish as AWS-prefixed keys and nothing branches on a cloud var.
 
 locals {
   # Which cosign mode verifies the platform artifacts: keyless (Fulcio
@@ -36,9 +36,6 @@ locals {
   reserved_cluster_vars = merge({
     CLUSTER_NAME = var.name
 
-    # The one key that tells the stack which cloud it is on; everything else
-    # below is either shared or guarded by it.
-    CLOUD          = "aws"
     AWS_ACCOUNT_ID = local.account_id
     AWS_REGION     = data.aws_region.current.region
     AWS_PARTITION  = local.partition
@@ -188,15 +185,13 @@ locals {
     # this provider. Keys are harness-scoped (CLAUDE_*, so codex/copilot could
     # later publish CODEX_* siblings) and the knobs provider-prefixed
     # (BEDROCK_REGION, never a generic REGION) — clarity over brevity,
-    # mirroring the broker's own PATCHY_BEDROCK_* env names. The vertex pair
-    # exists so the contract is identical on every cloud; on AWS it is always
-    # empty (vertex needs GCP ambient credentials the broker cannot get here).
+    # mirroring the broker's own PATCHY_BEDROCK_* env names. Only the aws
+    # provider pair is published: the manifests' aws tree never reads the
+    # vertex vars, and the common patchy core carries := defaults for them.
     CLAUDE_PROVIDER              = local.claude_provider.name
     CLAUDE_ANTHROPIC_AUTH        = local.claude_provider.anthropic_auth
     CLAUDE_BEDROCK_REGION        = local.claude_provider.name == "bedrock" ? coalesce(local.claude_provider.bedrock_region, data.aws_region.current.region) : ""
     CLAUDE_BEDROCK_REGION_PREFIX = local.claude_provider.bedrock_region_prefix != null ? local.claude_provider.bedrock_region_prefix : ""
-    CLAUDE_VERTEX_REGION         = ""
-    CLAUDE_VERTEX_PROJECT_ID     = ""
     # canonical=providerID pairs, comma-joined sorted — the same flat-string
     # list pattern KARPENTER_* and STACK_COMPONENTS already prove.
     CLAUDE_MODEL_MAP = join(",", [for k in sort(keys(local.claude_provider.model_map)) : "${k}=${local.claude_provider.model_map[k]}"])

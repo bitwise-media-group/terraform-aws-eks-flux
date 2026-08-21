@@ -104,10 +104,11 @@ requires that store to admit the cluster's `registry_reader_principals`.
 ## The terraform ↔ flux contract
 
 The `cluster-vars` ConfigMap publishes these to the stack. Keys are deliberately cloud-neutral wherever the meaning is
-shared, so one manifests stack serves every cloud and branches only on `CLOUD`. Optional surfaces use the
+shared; the manifests are per-cloud trees (`flux.sync.path` selects the `aws` entrypoint, flux-manifests >= 3.0.0), so
+aws-only facts publish as AWS-prefixed keys and nothing branches on a cloud var. Optional surfaces use the
 empty-string convention.
 
-Cloud-neutral: `CLUSTER_NAME`, `PLATFORM_REGISTRY`, `CONTAINER_REGISTRY`, `OCI_PROVIDER`, `ARTIFACT_TAG_PROVIDER`,
+Cloud-neutral: `CLUSTER_NAME`, `PLATFORM_REGISTRY`, `CONTAINER_REGISTRY`,
 `SIGNED_IDENTITY_ISSUER`, `SIGNED_IDENTITY_CHARTS`, `SIGNED_IDENTITY_IMAGES`, `SIGNED_IDENTITY_MANIFESTS`,
 `FLUX_SYNC_CHANNEL`, `DNS_ZONE_NAME`,
 `DNS_DOMAIN`, `PATCHY_DOMAIN`, `ACME_EMAIL`, `GATEWAY_IP`, `SECRET_PREFIX`, `STACK_COMPONENTS`, `AGENT_HARNESSES`,
@@ -129,7 +130,6 @@ AWS-specific:
 
 | key                                                | notes                                                    |
 | -------------------------------------------------- | -------------------------------------------------------- |
-| `CLOUD`                                            | `aws` — the key the stack branches on                    |
 | `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_PARTITION`    |                                                          |
 | `VPC_ID`, `NODE_SECURITY_GROUP_ID`                 | for the load-balancer controller and Karpenter           |
 | `CLUSTER_DISCOVERY_TAG`, `CLUSTER_DISCOVERY_VALUE` | `karpenter.sh/discovery` and its value                   |
@@ -137,6 +137,7 @@ AWS-specific:
 | `GATEWAY_EIP_ALLOCATIONS`, `GATEWAY_SUBNETS`       | bound to the Gateway's NLB by annotation                 |
 | `GATEWAY_NLB_TARGET_TYPE`                          | `instance` — see the caveat below                        |
 | `GATEWAY_API_CRDS`                                 | `gateway.install_crds`, default `"true"` — see the caveat below |
+| `OCI_PROVIDER`, `ARTIFACT_TAG_PROVIDER`            | `aws` / `ECRArtifactTag` — registry auth and tag-listing dialects (the google tree relies on the manifests' gcp defaults instead) |
 | `OTEL_REGION`, `OTEL_AMP_ENDPOINT`                 | CloudWatch/X-Ray always; AMP when configured             |
 | `SIGNED_IDENTITY_KMS_KEY`                          | the KMS signing key ARN (empty in keyless mode, when the `SIGNED_IDENTITY_*` subjects are set instead) |
 | `DEX_CONNECTORS`                                   | JSON-encoded dex connector declarations (`sso.connectors`, normalized; `[]` when sso is off) |
@@ -154,8 +155,8 @@ Karpenter's NodePool shape travels the same way, since `cluster-vars` is a flat 
 
 The claude runner's model provider (`var.patchy.claude.provider`, terminated by patchy's egress-broker) travels the
 same way. Keys are harness-scoped (`CLAUDE_*`; a codex/copilot surface would publish `CODEX_*` siblings) and the knobs
-provider-prefixed (`CLAUDE_BEDROCK_REGION`, never a generic `REGION`) — the same names on every cloud, so the vertex
-pair exists here too and is simply always empty on AWS:
+provider-prefixed (`CLAUDE_BEDROCK_REGION`, never a generic `REGION`). Only the aws provider pair is published — the
+manifests' common patchy core carries `:=` defaults for the vertex pair the google module publishes:
 
 | key                            | notes                                                                             |
 | ------------------------------ | --------------------------------------------------------------------------------- |
@@ -163,8 +164,6 @@ pair exists here too and is simply always empty on AWS:
 | `CLAUDE_ANTHROPIC_AUTH`        | `key` or `token` (default)                                                        |
 | `CLAUDE_BEDROCK_REGION`        | when the provider is bedrock: the configured region or the cluster's; else empty  |
 | `CLAUDE_BEDROCK_REGION_PREFIX` | inference-profile geo prefix (us/eu/apac); empty when unset                       |
-| `CLAUDE_VERTEX_REGION`         | always empty on AWS (vertex needs GCP ambient credentials)                        |
-| `CLAUDE_VERTEX_PROJECT_ID`     | always empty on AWS                                                               |
 | `CLAUDE_MODEL_MAP`             | comma-joined sorted `canonical=providerID` pairs; empty when unmapped             |
 
 When the provider is bedrock the broker's KSA (`patchy`/`patchy-egress-broker`) additionally gets a Pod Identity
@@ -332,7 +331,7 @@ shells out to `aws eks get-token` (see the caveat above).
 | cluster\_log\_types | Control-plane log streams shipped to CloudWatch Logs. | `set(string)` | <pre>[<br/>  "api",<br/>  "audit",<br/>  "authenticator"<br/>]</pre> | no |
 | dns | Existing delegated Route53 hosted zone (created upstream; never owned here, so cluster destroy/recreate never<br/>touches the zone or its NS delegation). zone\_name enables the DNS/TLS surface: the external-dns + cert-manager<br/>grants and the DNS\_* / PATCHY\_DOMAIN cluster vars. host optionally narrows the served host below the zone apex. | <pre>object({<br/>    zone_name  = optional(string)<br/>    host       = optional(string)<br/>    acme_email = optional(string)<br/>  })</pre> | `{}` | no |
 | encryption\_kms\_key\_arn | Optional customer-managed KMS key for Kubernetes secrets envelope encryption; null leaves EKS's default encryption in place. | `string` | `null` | no |
-| flux | Flux bootstrap knobs. Chart repositories, the distribution registry and the sync url default onto platform\_registry;<br/>sync.ref picks the release channel (stable, staging, or edge for dev clusters tracking trunk -- pair edge with the<br/>manifests\_edge signing subject). | <pre>object({<br/>    operator_chart = optional(object({<br/>      repository = optional(string)<br/>      version    = optional(string)<br/>    }), {})<br/>    instance_chart = optional(object({<br/>      repository = optional(string)<br/>      version    = optional(string)<br/>    }), {})<br/>    distribution = optional(object({<br/>      version  = optional(string, "2.x")<br/>      registry = optional(string)<br/>      artifact = optional(string)<br/>    }), {})<br/>    sync = optional(object({<br/>      url      = optional(string)<br/>      ref      = optional(string, "stable")<br/>      path     = optional(string, "stack")<br/>      interval = optional(string, "5m")<br/>    }), {})<br/>    kustomize_patches = optional(list(any), [])<br/>    cluster_vars      = optional(map(string), {})<br/>    namespaces        = optional(list(string), [])<br/>  })</pre> | `{}` | no |
+| flux | Flux bootstrap knobs. Chart repositories, the distribution registry and the sync url default onto platform\_registry;<br/>sync.ref picks the release channel (stable, staging, or edge for dev clusters tracking trunk -- pair edge with the<br/>manifests\_edge signing subject); sync.path selects the manifests' per-cloud entrypoint tree ("aws" -- requires<br/>flux-manifests >= 3.0.0, whose artifact ships the aws/google/common trees). | <pre>object({<br/>    operator_chart = optional(object({<br/>      repository = optional(string)<br/>      version    = optional(string)<br/>    }), {})<br/>    instance_chart = optional(object({<br/>      repository = optional(string)<br/>      version    = optional(string)<br/>    }), {})<br/>    distribution = optional(object({<br/>      version  = optional(string, "2.x")<br/>      registry = optional(string)<br/>      artifact = optional(string)<br/>    }), {})<br/>    sync = optional(object({<br/>      url      = optional(string)<br/>      ref      = optional(string, "stable")<br/>      path     = optional(string, "aws")<br/>      interval = optional(string, "5m")<br/>    }), {})<br/>    kustomize_patches = optional(list(any), [])<br/>    cluster_vars      = optional(map(string), {})<br/>    namespaces        = optional(list(string), [])<br/>  })</pre> | `{}` | no |
 | gateway | The platform Gateway's static addresses. One Cilium Gateway materialises one LoadBalancer Service (an NLB), and every<br/>HTTPRoute hostname shares its address — so the EIPs are reserved once, one per public subnet the NLB spans, and new<br/>hosts are manifests-only. Reserving them here (default) keeps them outside the disposable cluster's lifecycle, so<br/>destroy/recreate serves the same addresses; alternatively reference existing allocations by id.<br/><br/>install\_crds publishes GATEWAY\_API\_CRDS, which has the flux-manifests gateway component install the Gateway API<br/>CRDs (the standard-channel set Cilium requires): EKS ships none today, and Cilium implements the API without<br/>owning its CRDs. Flip it off if the CRDs arrive some other way — most likely the day EKS installs them as managed<br/>cluster furniture — and the manifests orphan them rather than pruning (deleting a CRD deletes every Gateway and<br/>HTTPRoute with it). | <pre>object({<br/>    reserve_static_ip = optional(bool, true)<br/>    allocation_ids    = optional(set(string), [])<br/>    install_crds      = optional(bool, true)<br/>  })</pre> | `{}` | no |
 | karpenter | Workload capacity, provisioned by Karpenter. Terraform owns the IAM roles, the interruption<br/>queue and the discovery tags; the chart and the EC2NodeClass/NodePool objects are a flux-manifests component,<br/>rendered from the KARPENTER\_* cluster vars this shape publishes (lists arrive comma-joined and are expanded with<br/>splitList, exactly as STACK\_COMPONENTS already is).<br/><br/>There is deliberately no min\_nodes: Karpenter scales from zero on pending pods and offers only ceilings<br/>(spec.limits). The cluster's floor is system\_node\_pool.min\_size. | <pre>object({<br/>    node_pool = optional(object({<br/>      name                 = optional(string, "default")<br/>      instance_categories  = optional(list(string), ["c", "m", "r"])<br/>      instance_families    = optional(list(string), [])<br/>      instance_sizes       = optional(list(string), ["large", "xlarge", "2xlarge"])<br/>      capacity_types       = optional(list(string), ["spot", "on-demand"])<br/>      architectures        = optional(list(string), ["amd64"])<br/>      ami_alias            = optional(string, "al2023@latest")<br/>      max_nodes            = optional(number, 20)<br/>      max_cpu              = optional(number, 64)<br/>      max_memory_gib       = optional(number, 256)<br/>      disk_size_gib        = optional(number, 100)<br/>      consolidation_policy = optional(string, "WhenEmptyOrUnderutilized")<br/>      consolidate_after    = optional(string, "1m")<br/>      expire_after         = optional(string, "720h")<br/>    }), {})<br/>  })</pre> | `{}` | no |
 | kubernetes\_version | EKS control-plane version, e.g. 1.34. Null tracks whatever EKS defaults to at create and pins it in state. | `string` | `null` | no |
