@@ -286,8 +286,13 @@ run "cluster_vars_contract" {
   command = plan
 
   assert {
-    condition     = local.reserved_cluster_vars.CLOUD == "aws" && local.reserved_cluster_vars.OCI_PROVIDER == "aws" && local.reserved_cluster_vars.ARTIFACT_TAG_PROVIDER == "ECRArtifactTag"
-    error_message = "the stack branches on CLOUD, and the flux controllers resolve ECR credentials via the aws OCI provider and the ECRArtifactTag RSIP type"
+    condition     = local.reserved_cluster_vars.OCI_PROVIDER == "aws" && local.reserved_cluster_vars.ARTIFACT_TAG_PROVIDER == "ECRArtifactTag"
+    error_message = "the flux controllers resolve ECR credentials via the aws OCI provider and the ECRArtifactTag RSIP type"
+  }
+
+  assert {
+    condition     = !contains(keys(local.reserved_cluster_vars), "CLOUD")
+    error_message = "the manifests are per-cloud trees (flux.sync.path selects aws) — nothing may publish or branch on a CLOUD var"
   }
 
   assert {
@@ -359,10 +364,15 @@ run "cluster_vars_contract" {
 
   assert {
     condition = alltrue([
-      for key in ["CLAUDE_BEDROCK_REGION", "CLAUDE_BEDROCK_REGION_PREFIX", "CLAUDE_VERTEX_REGION", "CLAUDE_VERTEX_PROJECT_ID", "CLAUDE_MODEL_MAP"] :
+      for key in ["CLAUDE_BEDROCK_REGION", "CLAUDE_BEDROCK_REGION_PREFIX", "CLAUDE_MODEL_MAP"] :
       local.reserved_cluster_vars[key] == ""
     ])
     error_message = "provider knobs that do not apply must publish empty strings, not null"
+  }
+
+  assert {
+    condition     = length([for key in keys(local.reserved_cluster_vars) : key if strcontains(key, "VERTEX")]) == 0
+    error_message = "only the aws provider pair is published: the manifests' aws tree never reads the vertex vars (the common patchy core carries := defaults for them)"
   }
 
   assert {
