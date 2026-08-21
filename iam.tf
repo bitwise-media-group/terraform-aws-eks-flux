@@ -1,11 +1,24 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-# EKS Pod Identity associations for the flux-deployed platform workloads. The
+# IAM identities for the flux-deployed platform workloads. The
 # namespace/service-account pairs are the terraform <-> flux-manifests contract
 # (overridable via var.workload_identity so this repo can track a manifests
 # change without a schema change) — the pairs themselves are cloud-neutral, so
 # every cluster consumes the same manifests.
+#
+# Workloads with a real pod bind through EKS Pod Identity associations. The
+# secret readers are the one exception: the secrets-store-sync-controller
+# materialises each SecretSync WITHOUT a pod, minting the sync KSA's token via
+# the TokenRequest API — and a token with no pod behind it lacks the
+# kubernetes.io/pod claim Pod Identity's AssumeRoleForPodIdentity requires, so
+# an association could never be exercised. The podless path is IRSA:
+# AssumeRoleWithWebIdentity needs only the SA-scoped OIDC token, so the
+# cluster's issuer is registered as an IAM OIDC provider and each reader role
+# trusts its own system:serviceaccount subject. The manifests point each sync
+# KSA at its role through the eks.amazonaws.com/role-arn annotation, composed
+# from the SECRETS_ROLE_PREFIX cluster var (flux.tf) — role names are
+# deterministic, so one prefix covers every pair.
 #
 # flux-system's own associations (source-controller, flux-operator) live in
 # modules/flux-operator/iam.tf next to the workloads they serve. Karpenter's
@@ -23,10 +36,51 @@ data "aws_iam_policy_document" "pod_identity_assume_role" {
   }
 }
 
+data "tls_certificate" "cluster" {
+  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "irsa" {
+  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.cluster.certificates[0].sha1_fingerprint]
+
+  tags = var.tags
+}
+
+data "aws_iam_policy_document" "irsa_assume_role" {
+  for_each = local.secret_reader_grants
+
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.irsa.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_issuer_host}:sub"
+      values   = ["system:serviceaccount:${each.value.namespace}:${each.value.service_account}"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_issuer_host}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
 locals {
   route53_zone_arn = var.dns.zone_name != null ? "arn:${local.partition}:route53:::hostedzone/${local.dns_zone_id}" : null
 
   secret_arn_pattern = "arn:${local.partition}:secretsmanager:${data.aws_region.current.region}:${local.account_id}:secret:${local.secret_prefix}*"
+
+  # The issuer URL as an IAM condition-key host — the sub/aud keys on the OIDC
+  # provider's trust conditions are the issuer with its scheme stripped.
+  oidc_issuer_host = trimprefix(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://")
 
   # The sync KSAs the patchy component's out-of-band secret syncs imply,
   # derived from the election the same way sso.tf derives the SSO pairs (the
@@ -42,8 +96,28 @@ locals {
     ] : [],
   )
 
+  # The KSAs the secrets-store-sync-controller runs as, one per consuming
+  # namespace: the pairs the SSO surface implies (derived in sso.tf from the
+  # election), the pairs the patchy election implies (above), plus any
+  # extras the caller names -- setunion(), because the derivations overlap
+  # (SSO + patchy both imply patchy/patchy-secrets) and a for-expression
+  # errors on a duplicate key. Scoped to this cluster's SECRET_PREFIX so
+  # clusters sharing an account cannot read each other's secrets; each
+  # module-authored secret's own policy (sso.tf) narrows it further.
+  # Kept apart from the pod-bound grants because these roles trust the IRSA
+  # OIDC provider, not Pod Identity (see the header comment).
+  secret_reader_grants = {
+    for reader in setunion(local.sso_secret_readers, local.patchy_secret_readers, var.workload_identity.secret_readers) :
+    "secrets-${reader.namespace}-${reader.service_account}" => {
+      namespace       = reader.namespace
+      service_account = reader.service_account
+      policy          = data.aws_iam_policy_document.secret_read.json
+    }
+  }
+
   # name -> { namespace, service_account, policy }. Every entry becomes one IAM
-  # role, one inline policy and one Pod Identity association.
+  # role and one inline policy; every entry except the podless secret readers
+  # also becomes a Pod Identity association.
   workload_grants = merge(
     # DNS-01 challenges and record publication both need the same write on the
     # delegated zone; absent entirely when the DNS surface is off.
@@ -93,22 +167,7 @@ locals {
         policy          = data.aws_iam_policy_document.bedrock_invoke[0].json
       }
     },
-    # The KSAs the secrets-store-sync-controller runs as, one per consuming
-    # namespace: the pairs the SSO surface implies (derived in sso.tf from the
-    # election), the pairs the patchy election implies (above), plus any
-    # extras the caller names -- setunion(), because the derivations overlap
-    # (SSO + patchy both imply patchy/patchy-secrets) and a for-expression
-    # errors on a duplicate key. Scoped to this cluster's SECRET_PREFIX so
-    # clusters sharing an account cannot read each other's secrets; each
-    # module-authored secret's own policy (sso.tf) narrows it further.
-    {
-      for reader in setunion(local.sso_secret_readers, local.patchy_secret_readers, var.workload_identity.secret_readers) :
-      "secrets-${reader.namespace}-${reader.service_account}" => {
-        namespace       = reader.namespace
-        service_account = reader.service_account
-        policy          = data.aws_iam_policy_document.secret_read.json
-      }
-    },
+    local.secret_reader_grants,
   )
 }
 
@@ -333,9 +392,16 @@ data "aws_iam_policy_document" "secret_read" {
 resource "aws_iam_role" "workload" {
   for_each = local.workload_grants
 
-  name               = "${var.name}-${each.key}"
-  description        = "Platform workload ${each.value.namespace}/${each.value.service_account} (${var.name})"
-  assume_role_policy = data.aws_iam_policy_document.pod_identity_assume_role.json
+  name        = "${var.name}-${each.key}"
+  description = "Platform workload ${each.value.namespace}/${each.value.service_account} (${var.name})"
+
+  # The podless secret readers trust the IRSA OIDC provider; everything with a
+  # real pod trusts Pod Identity (see the header comment).
+  assume_role_policy = (
+    contains(keys(local.secret_reader_grants), each.key)
+    ? data.aws_iam_policy_document.irsa_assume_role[each.key].json
+    : data.aws_iam_policy_document.pod_identity_assume_role.json
+  )
 
   tags = var.tags
 }
@@ -349,7 +415,13 @@ resource "aws_iam_role_policy" "workload" {
 }
 
 resource "aws_eks_pod_identity_association" "workload" {
-  for_each = local.workload_grants
+  # Every grant except the podless secret readers: their KSAs never back a
+  # pod, so an association could never be exercised — they assume their roles
+  # through the IRSA trust above instead.
+  for_each = {
+    for key, grant in local.workload_grants : key => grant
+    if !contains(keys(local.secret_reader_grants), key)
+  }
 
   cluster_name    = aws_eks_cluster.main.name
   namespace       = each.value.namespace

@@ -402,9 +402,9 @@ variable "gateway" {
 
 variable "workload_identity" {
   description = <<-EOT
-    Namespace/service-account pairs the EKS Pod Identity associations bind to — the terraform <-> flux-manifests
-    contract, cloud-neutral in shape so every cluster tracks the same manifests. Override only to follow a
-    manifests change.
+    Namespace/service-account pairs the workload IAM roles bind to (EKS Pod Identity associations, except the podless
+    secret_readers which bind through IRSA) — the terraform <-> flux-manifests contract, cloud-neutral in shape so
+    every cluster tracks the same manifests. Override only to follow a manifests change.
   EOT
   type = object({
     external_dns = optional(object({
@@ -511,7 +511,7 @@ variable "patchy" {
   description = <<-EOT
     Patchy platform knobs. harnesses elects the agent harnesses the cluster runs, published as the AGENT_HARNESSES
     cluster var -- it gates the chart's per-harness runners, the harness credential syncs, and the derived
-    secret-reader Pod Identity roles (iam.tf); create the matching credential secrets with modules/secrets (same
+    secret-reader IRSA roles (iam.tf); create the matching credential secrets with modules/secrets (same
     value there). claude.provider configures the model provider patchy's egress-broker terminates all
     claude-runner traffic against, published as the CLAUDE_* cluster vars (CLAUDE_PROVIDER, CLAUDE_ANTHROPIC_AUTH,
     CLAUDE_BEDROCK_REGION, CLAUDE_BEDROCK_REGION_PREFIX, CLAUDE_VERTEX_REGION, CLAUDE_VERTEX_PROJECT_ID,

@@ -25,5 +25,11 @@ terraform {
       source  = "hashicorp/random"
       version = ">= 3.7, < 4.0"
     }
+    # The cluster issuer's certificate thumbprint for the IRSA OIDC provider
+    # (iam.tf).
+    tls = {
+      source  = "hashicorp/tls"
+      version = ">= 4.0, < 5.0"
+    }
   }
 }

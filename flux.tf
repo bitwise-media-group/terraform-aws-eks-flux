@@ -123,6 +123,13 @@ locals {
     # account can carry distinct secrets (empty-string convention when unset).
     SECRET_PREFIX = local.secret_prefix
 
+    # The sync KSAs' IRSA reader roles (iam.tf), published as one ARN prefix
+    # rather than a var per pair: role names are deterministic
+    # (${var.name}-secrets-<ns>-<sa>), so the manifests compose
+    # ${SECRETS_ROLE_PREFIX}<ns>-<sa> into each sync SA's
+    # eks.amazonaws.com/role-arn annotation.
+    SECRETS_ROLE_PREFIX = "arn:${local.partition}:iam::${local.account_id}:role/${var.name}-secrets-"
+
     # The optional-tier election, dex riding the sso toggle rather than the
     # component set. A fully-empty election publishes the reserved name "none"
     # -- a short name matching no component -- because an empty string would

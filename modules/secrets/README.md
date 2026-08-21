@@ -11,7 +11,7 @@ Instantiate it from a **durable** root, not beside the cluster: the secret *vers
 manual re-entry.
 
 **Containers only, deliberately no grants** — the inverse of the GKE sibling module. On EKS the read grant is
-identity-side: the cluster module creates the sync KSAs' Pod Identity reader roles with
+identity-side: the cluster module creates the sync KSAs' IRSA reader roles with
 `GetSecretValue`/`DescribeSecret` scoped to `${SECRET_PREFIX}*` (`iam.tf`), so these secrets become readable the
 moment the cluster exists. A durable-root resource policy naming those per-cluster role principals would invert the
 lifecycle: `PutResourcePolicy` validates AWS principals, so the policy could not land before the cluster and would

@@ -193,7 +193,8 @@ locals {
   # Which secret-reader identities the SSO surface implies. Derived rather than
   # caller-listed: the pairs are fixed by the manifests contract, and an
   # unelected relying party must not get a role. iam.tf turns each into a
-  # workload role + Pod Identity association, keyed secrets-<ns>-<sa>.
+  # workload role with an IRSA trust (the syncs are podless), keyed
+  # secrets-<ns>-<sa>.
   sso_secret_readers = var.sso.enabled ? concat(
     [{ namespace = "dex", service_account = "dex-secrets" }],
     contains(var.stack_components, "patchy") ? [{ namespace = "patchy", service_account = "patchy-secrets" }] : [],
