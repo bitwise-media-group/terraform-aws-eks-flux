@@ -509,6 +509,10 @@ variable "patchy" {
     CLAUDE_MODEL_MAP). Keys are harness-scoped (CLAUDE_*, not a generic PROVIDER_*) and the knobs provider-prefixed
     (bedrock_region, not a bare region) — clarity over brevity, mirroring the broker's own PATCHY_BEDROCK_* env names.
     When the provider is bedrock the broker's KSA additionally gets the Bedrock invoke grant (iam.tf).
+    evaluation.enabled deploys the evaluation controller -- the evolve-facing remote-evaluation API plus the runners
+    that execute submitted evaluation units -- published as the PATCHY_EVALUATION cluster var. It requires sso (the API
+    has no unauthenticated posture; evolve authenticates through dex as a public PKCE client) and at least one harness
+    (the chart refuses an evaluation controller with zero enabled runners).
   EOT
   type = object({
     harnesses = optional(set(string), ["claude"])
@@ -524,6 +528,10 @@ variable "patchy" {
         bedrock_region_prefix = optional(string)              # inference-profile geo prefix (us/eu/apac)
         model_map             = optional(map(string), {})     # canonical id -> provider model id
       }), {})
+    }), {})
+
+    evaluation = optional(object({
+      enabled = optional(bool, false)
     }), {})
   })
   default  = {}
@@ -554,6 +562,16 @@ variable "patchy" {
   validation {
     condition     = var.patchy.claude.provider.name == "bedrock" || var.patchy.claude.provider.bedrock_region_prefix == null
     error_message = "patchy.claude.provider.bedrock_region_prefix only applies when the provider is bedrock."
+  }
+
+  validation {
+    condition     = !var.patchy.evaluation.enabled || var.sso.enabled
+    error_message = "patchy.evaluation requires sso -- the evaluation API has no unauthenticated posture; evolve authenticates through dex."
+  }
+
+  validation {
+    condition     = !var.patchy.evaluation.enabled || length(var.patchy.harnesses) > 0
+    error_message = "patchy.evaluation requires at least one harness -- the chart refuses an evaluation controller with zero enabled runners."
   }
 }
 

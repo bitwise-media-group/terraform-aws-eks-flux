@@ -341,6 +341,11 @@ run "cluster_vars_contract" {
     ])
     error_message = "provider knobs that do not apply must publish empty strings, not null"
   }
+
+  assert {
+    condition     = local.reserved_cluster_vars.PATCHY_EVALUATION == "false"
+    error_message = "the evaluation controller must default off, published as the literal \"false\" (not the empty string -- it is a boolean toggle, and the manifests' := default matches)"
+  }
 }
 
 run "agent_harness_election" {
@@ -687,6 +692,43 @@ run "sso_requires_connector" {
   }
 
   expect_failures = [var.sso]
+}
+
+run "evaluation_controller_election" {
+  command = plan
+
+  variables {
+    dns = {
+      zone_name  = "patchy.bitwisemedia.co.uk"
+      acme_email = "platform@bitwisemedia.co.uk"
+    }
+    sso = {
+      enabled = true
+      connector = {
+        type = "google"
+      }
+    }
+    patchy = {
+      evaluation = { enabled = true }
+    }
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.PATCHY_EVALUATION == "true"
+    error_message = "enabling the evaluation controller must publish PATCHY_EVALUATION as the literal \"true\""
+  }
+}
+
+run "evaluation_requires_sso" {
+  command = plan
+
+  variables {
+    patchy = {
+      evaluation = { enabled = true }
+    }
+  }
+
+  expect_failures = [var.patchy]
 }
 
 run "sso_clients_reject_unknown_ids" {

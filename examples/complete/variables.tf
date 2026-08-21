@@ -115,7 +115,7 @@ variable "sso" {
 }
 
 variable "patchy" {
-  description = "Patchy platform knobs: the model provider its egress-broker proxies claude-runner traffic to, published as the CLAUDE_* cluster vars."
+  description = "Patchy platform knobs: the model provider its egress-broker proxies claude-runner traffic to, published as the CLAUDE_* cluster vars; evaluation.enabled deploys the evaluation controller (PATCHY_EVALUATION), which requires sso."
   type = object({
     claude = optional(object({
       provider = optional(object({
@@ -125,6 +125,10 @@ variable "patchy" {
         bedrock_region_prefix = optional(string)
         model_map             = optional(map(string), {})
       }), {})
+    }), {})
+
+    evaluation = optional(object({
+      enabled = optional(bool, false)
     }), {})
   })
   default = {}
