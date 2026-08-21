@@ -252,8 +252,13 @@ run "workload_identity_is_pod_identity" {
   command = plan
 
   assert {
-    condition     = length(aws_eks_pod_identity_association.workload) == length(local.workload_grants)
-    error_message = "every workload grant must get exactly one Pod Identity association"
+    condition     = length(aws_eks_pod_identity_association.workload) == length(local.workload_grants) - length(local.secret_reader_grants)
+    error_message = "every pod-backed workload grant must get exactly one Pod Identity association; only the podless secret readers are excluded"
+  }
+
+  assert {
+    condition     = length(setintersection(toset(keys(aws_eks_pod_identity_association.workload)), toset(keys(local.secret_reader_grants)))) == 0
+    error_message = "the podless secret readers must never get a Pod Identity association: their KSAs back no pod, so they assume their roles via the IRSA trust instead"
   }
 
   assert {
