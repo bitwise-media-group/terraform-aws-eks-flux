@@ -262,6 +262,16 @@ run "workload_identity_is_pod_identity" {
     condition     = aws_eks_pod_identity_association.karpenter_controller.namespace == "kube-system"
     error_message = "Karpenter's controller identity is a Pod Identity association like every other platform workload"
   }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.ebs_csi["true"].namespace == "kube-system" && aws_eks_pod_identity_association.ebs_csi["true"].service_account == "ebs-csi-controller-sa"
+    error_message = "the EBS CSI driver needs its own Pod Identity association: it calls the EC2 API and has no credential source otherwise"
+  }
+
+  assert {
+    condition     = endswith(aws_iam_role_policy_attachment.ebs_csi["true"].policy_arn, "AmazonEBSCSIDriverPolicy")
+    error_message = "the EBS CSI driver's role must carry the AWS managed AmazonEBSCSIDriverPolicy"
+  }
 }
 
 run "cluster_vars_contract" {
