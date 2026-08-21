@@ -340,6 +340,11 @@ run "cluster_vars_contract" {
     error_message = "under a non-vpc-cni datapath the AWS Load Balancer Controller can only register instance targets"
   }
 
+  assert {
+    condition     = local.reserved_cluster_vars.GATEWAY_API_CRDS == "true"
+    error_message = "gateway.install_crds defaults on: EKS ships no Gateway API CRDs, so the manifests must install them"
+  }
+
   # The claude runner's model provider (patchy's egress-broker) defaults to
   # first-party Anthropic with OAuth-token auth.
   assert {

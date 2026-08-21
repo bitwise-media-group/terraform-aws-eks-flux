@@ -107,6 +107,15 @@ locals {
     # the constraint is visible where the rest of the Gateway wiring is.
     GATEWAY_NLB_TARGET_TYPE = "instance"
 
+    # Whether the manifests install the Gateway API CRDs (the standard-channel
+    # set Cilium requires). EKS ships none and Cilium does not own them, so
+    # this defaults on; it exists to be flipped off the day AWS installs the
+    # CRDs as managed cluster furniture (as GKE already does), handing them
+    # over rather than fighting for ownership. "true"/"false" like
+    # PATCHY_EVALUATION: a boolean, not an optional value, and the manifests'
+    # := default ("true") covers a terraform predating the key.
+    GATEWAY_API_CRDS = var.gateway.install_crds ? "true" : "false"
+
     # Where the otel-collector writes telemetry. CloudWatch and X-Ray in this
     # account always; AMP only when a workspace endpoint is configured.
     OTEL_REGION       = data.aws_region.current.region

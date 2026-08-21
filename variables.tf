@@ -374,10 +374,17 @@ variable "gateway" {
     HTTPRoute hostname shares its address — so the EIPs are reserved once, one per public subnet the NLB spans, and new
     hosts are manifests-only. Reserving them here (default) keeps them outside the disposable cluster's lifecycle, so
     destroy/recreate serves the same addresses; alternatively reference existing allocations by id.
+
+    install_crds publishes GATEWAY_API_CRDS, which has the flux-manifests gateway component install the Gateway API
+    CRDs (the standard-channel set Cilium requires): EKS ships none today, and Cilium implements the API without
+    owning its CRDs. Flip it off if the CRDs arrive some other way — most likely the day EKS installs them as managed
+    cluster furniture — and the manifests orphan them rather than pruning (deleting a CRD deletes every Gateway and
+    HTTPRoute with it).
   EOT
   type = object({
     reserve_static_ip = optional(bool, true)
     allocation_ids    = optional(set(string), [])
+    install_crds      = optional(bool, true)
   })
   nullable = false
   default  = {}
