@@ -454,6 +454,8 @@ variable "observability" {
   description = <<-EOT
     Where the otel-collector ships telemetry. CloudWatch and X-Ray in the cluster's own account always; amp_endpoint
     optionally adds an Amazon Managed Prometheus remote-write target (and the aps:RemoteWrite grant that goes with it).
+    Pass the workspace's full remote-write URL (…/workspaces/ws-…/api/v1/remote_write) — the manifests hand it to the
+    prometheusremotewrite exporter verbatim.
   EOT
   type = object({
     amp_endpoint = optional(string)

@@ -42,6 +42,14 @@ mock_provider "aws" {
       json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
     }
   }
+
+  # A fixed PEM so the KMS-mode COSIGN_PUBLIC_KEY assertion can check the
+  # base64 round-trip rather than a random string.
+  mock_data "aws_kms_public_key" {
+    defaults = {
+      public_key_pem = "-----BEGIN PUBLIC KEY-----\nMOCK\n-----END PUBLIC KEY-----\n"
+    }
+  }
 }
 
 mock_provider "helm" {}
@@ -291,7 +299,7 @@ run "cluster_vars_contract" {
   # fails on an absent value.
   assert {
     condition = alltrue([
-      for key in ["DNS_ZONE_NAME", "DNS_ZONE_ID", "DNS_DOMAIN", "PATCHY_DOMAIN", "ACME_EMAIL", "OTEL_AMP_ENDPOINT", "SIGNED_IDENTITY_KMS_KEY"] :
+      for key in ["DNS_ZONE_NAME", "DNS_ZONE_ID", "DNS_DOMAIN", "PATCHY_DOMAIN", "ACME_EMAIL", "OTEL_AMP_ENDPOINT", "SIGNED_IDENTITY_KMS_KEY", "COSIGN_PUBLIC_KEY"] :
       local.reserved_cluster_vars[key] == ""
     ])
     error_message = "unset optional surfaces must publish empty strings, not null"
@@ -450,6 +458,14 @@ run "kms_signing_mode" {
       local.reserved_cluster_vars[key] == ""
     ])
     error_message = "the keyless identities must publish empty strings in KMS mode"
+  }
+
+  # The manifests render each verified namespace's cosign-pub Secret from
+  # this var, so it must carry the signing key's public half base64-encoded
+  # (Secret data format).
+  assert {
+    condition     = base64decode(local.reserved_cluster_vars.COSIGN_PUBLIC_KEY) == "-----BEGIN PUBLIC KEY-----\nMOCK\n-----END PUBLIC KEY-----\n"
+    error_message = "KMS mode must publish the signing key's public half as base64 PEM in COSIGN_PUBLIC_KEY"
   }
 
   assert {
