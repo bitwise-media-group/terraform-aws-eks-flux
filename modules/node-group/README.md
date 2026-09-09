@@ -6,9 +6,10 @@ security group (which always rides along for control-plane reachability), the gp
 enforcement - while everything the API expresses directly (instance types, capacity type, scaling, labels, taints)
 stays on the node group itself.
 
-Names are prefixes: the node group and launch template get generated suffixes, so a replacement group can be standing
-(`create_before_destroy`) before the group it supersedes drains. The desired size is set once at create and then left
-to Kubernetes (`ignore_changes`).
+Names are prefixes (the node group and launch template get generated suffixes), but replacement is destroy-then-create
+on purpose: Terraform forces `create_before_destroy` onto every dependency of a resource that sets it, and the group
+depends on the cluster, whose fixed name cannot be created before its predecessor is destroyed. The desired size is set
+once at create and then left to Kubernetes (`ignore_changes`).
 
 `WINDOWS_*` AMI types are supported; pair them with a node role admitted through an `EC2_WINDOWS` access entry (an IAM
 principal carries exactly one access entry, so Windows nodes need a role separate from the Linux one).

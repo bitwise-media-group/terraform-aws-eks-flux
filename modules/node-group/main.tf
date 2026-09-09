@@ -51,9 +51,8 @@ resource "aws_launch_template" "main" {
 
   tags = var.tags
 
-  lifecycle {
-    create_before_destroy = true
-  }
+  # No create_before_destroy here or on the node group below: see the node
+  # group's lifecycle block for why.
 }
 
 resource "aws_eks_node_group" "main" {
@@ -107,8 +106,13 @@ resource "aws_eks_node_group" "main" {
     # terraform sets the initial size and then stops arguing about it.
     ignore_changes = [scaling_config[0].desired_size]
 
-    # The name prefix makes the replacement group's name unique, so it can be
-    # standing before the old one drains.
-    create_before_destroy = true
+    # Deliberately NOT create_before_destroy, here or on the launch template.
+    # Terraform forces create_before_destroy onto every dependency of a
+    # resource that sets it, and this group depends on the cluster, whose name
+    # is fixed - a cluster replacement would then try to create the successor
+    # before destroying the original and fail with "Cluster already exists
+    # with name". A node group replacement is therefore destroy-then-create
+    # (a capacity gap for the rare forced replacement). name_prefix stays:
+    # moving to a fixed name would itself replace every existing group.
   }
 }
