@@ -2,16 +2,20 @@
 # SPDX-License-Identifier: MIT
 
 # The terraform -> flux contract. reserved_cluster_vars is every value this
-# cluster publishes to the flux-manifests stack (the cluster-vars ConfigMap,
+# cluster publishes to the platform manifests (the cluster-vars ConfigMap,
 # substituted into each Kustomization via postBuild.substituteFrom) - the
-# authoritative table lives in the flux-manifests README. Optional surfaces use
-# the empty-string convention so substitution never fails on an absent value;
-# manifests guard on empties.
+# authoritative table lives in the platform-manifests README. Optional
+# surfaces use the empty-string convention so substitution never fails on an
+# absent value; manifests guard on empties. Applications may read any of
+# these too, but nothing application-specific is published here: an
+# application's own values ride in its <key>-vars ConfigMap
+# (var.application_vars).
 #
 # The keys are deliberately cloud-neutral wherever the meaning is shared
-# (CLUSTER_NAME, SIGNED_IDENTITY_*, STACK_COMPONENTS, RBAC_GROUP_*, ...); the
-# manifests are per-cloud trees (flux.sync.path selects "aws"), so aws-only
-# facts publish as AWS-prefixed keys and nothing branches on a cloud var.
+# (CLUSTER_NAME, SIGNED_IDENTITY_*, PLATFORM_COMPONENTS, RBAC_GROUP_*, ...);
+# the manifests are per-cloud trees (flux.sync.path selects "aws"), so
+# aws-only facts publish as AWS-prefixed keys and nothing branches on a cloud
+# var.
 
 locals {
   # Which cosign mode verifies the platform artifacts: keyless (Fulcio
@@ -25,13 +29,43 @@ locals {
 
   default_charts_repository     = "oci://${var.platform_registry.url}/charts"
   default_distribution_registry = "${local.container_registry}/images/ghcr.io/fluxcd"
-  default_sync_url              = "oci://${var.platform_registry.url}/flux-manifests"
+
+  # The platform entrypoint image: one small artifact whose ResourceSet
+  # ranges over PLATFORM_COMPONENTS and emits an OCIRepository +
+  # Kustomization per component (oci://<registry>/manifests/<name>). The
+  # FluxInstance's single sync points here.
+  default_sync_url = "oci://${var.platform_registry.url}/manifests/platform"
+  sync_url         = coalesce(var.flux.sync.url, local.default_sync_url)
 
   node_pool = local.karpenter_node_pool
 
-  claude_provider = var.patchy.claude.provider
+  # The application seeds. Defaults that depend on cluster-level facts are
+  # resolved here (the keyless issuer onto the platform's, the path onto the
+  # per-cloud tree the platform itself syncs); the registry decides how the
+  # image is listed and pulled: under the platform prefix the flux
+  # controllers' Pod Identity reaches it through the ECR API, anywhere else
+  # the generic OCI listing (and an optional pull secret) does.
+  applications = {
+    for key, app in var.applications : key => {
+      url        = app.url
+      platform   = startswith(app.url, "oci://${var.platform_registry.url}/")
+      semver     = app.semver
+      path       = coalesce(app.path, "./deploy/${var.flux.sync.path}")
+      interval   = app.interval
+      depends_on = app.depends_on
+      verify = {
+        keyed   = app.verify.keyed
+        issuer  = app.verify.keyed ? null : coalesce(app.verify.issuer, var.signed_identity.issuer)
+        subject = app.verify.subject
+      }
+      pull_secret = app.pull_secret
+      prune       = app.prune
+      wait        = app.wait
+      timeout     = app.timeout
+    }
+  }
 
-  # Values every cluster publishes to flux-manifests, merged OVER any
+  # Values every cluster publishes to the platform, merged OVER any
   # caller-provided extras (reserved keys always win).
   reserved_cluster_vars = merge({
     CLUSTER_NAME = var.name
@@ -74,12 +108,18 @@ locals {
     # secret machinery. Public material - safe in a ConfigMap.
     COSIGN_PUBLIC_KEY = local.signing_kms ? base64encode(one(data.aws_kms_public_key.signing[*].public_key_pem)) : ""
 
-    # The stack's flux component (flux managing flux) re-renders the
-    # FluxInstance this module bootstraps: it needs the manifests-artifact
-    # signing subject for the sync verify patch, and the release channel for
-    # sync.ref -- both otherwise trapped inside this module's helm values.
+    # The platform's flux component (flux managing flux) re-renders the
+    # FluxInstance this module bootstraps: it needs the manifests signing
+    # subject for the sync verify patch, the release channel for sync.ref
+    # (and for every component source the entrypoint emits), the sync url
+    # and the per-cloud tree -- all otherwise trapped inside this module's
+    # bootstrap-only helm values. Publishing FLUX_SYNC_URL is what lets a
+    # running cluster be re-pointed: the flux component asserts it on the
+    # FluxInstance, so a changed var moves the sync without a kubectl patch.
     SIGNED_IDENTITY_MANIFESTS = local.signing_kms ? "" : var.signed_identity.manifests_subject
     FLUX_SYNC_CHANNEL         = var.flux.sync.ref
+    FLUX_SYNC_URL             = local.sync_url
+    PLATFORM_TREE             = var.flux.sync.path
 
     # DNS/TLS surface (empty when var.dns.zone_name is unset). The public
     # zone always exists - cert-manager's DNS-01 solver pins its id, since
@@ -92,7 +132,7 @@ locals {
     DNS_PUBLIC_ZONE_ID  = try(data.aws_route53_zone.cluster["public"].zone_id, "")
     DNS_PRIVATE_ZONE_ID = try(data.aws_route53_zone.cluster["private"].zone_id, "")
     DNS_DOMAIN          = var.dns.zone_name != null ? local.dns_domain : ""
-    PATCHY_DOMAIN       = var.dns.zone_name != null ? local.patchy_domain : ""
+    PLATFORM_DOMAIN     = var.dns.zone_name != null ? local.platform_domain : ""
     ACME_EMAIL          = var.dns.acme_email != null ? var.dns.acme_email : ""
 
     # The Gateway's NLB shape. A public Gateway is an internet-facing NLB on
@@ -117,9 +157,9 @@ locals {
     # set Cilium requires). EKS ships none and Cilium does not own them, so
     # this defaults on; it exists to be flipped off the day AWS installs the
     # CRDs as managed cluster furniture (as GKE already does), handing them
-    # over rather than fighting for ownership. "true"/"false" like
-    # PATCHY_EVALUATION: a boolean, not an optional value, and the manifests'
-    # := default ("true") covers a terraform predating the key.
+    # over rather than fighting for ownership. "true"/"false" rather than the
+    # empty-string convention: a boolean, not an optional value, and the
+    # manifests' := default ("true") covers a terraform predating the key.
     GATEWAY_API_CRDS = var.gateway.install_crds ? "true" : "false"
 
     # The stack's cilium component adopts helm_release.cilium by name
@@ -150,37 +190,16 @@ locals {
     # eks.amazonaws.com/role-arn annotation.
     SECRETS_ROLE_PREFIX = "arn:${local.partition}:iam::${local.account_id}:role/${var.name}-secrets-"
 
-    # The optional-tier election, dex riding the sso toggle rather than the
-    # component set. A fully-empty election publishes the reserved name "none"
-    # -- a short name matching no component -- because an empty string would
-    # re-trigger the manifests' elect-everything := default.
-    STACK_COMPONENTS = coalesce(
-      join(",", sort(setunion(var.stack_components, var.sso.enabled ? ["dex"] : []))),
+    # The electable-tier election, dex riding the sso toggle rather than the
+    # component set. The platform entrypoint's ResourceSet ranges over this
+    # list (the list IS the component graph's election). A fully-empty
+    # election publishes the reserved name "none" -- a short name matching no
+    # component -- because an empty string would re-trigger the manifests'
+    # elect-everything := default.
+    PLATFORM_COMPONENTS = coalesce(
+      join(",", sort(setunion(var.platform_components, var.sso.enabled ? ["dex"] : []))),
       "none",
     )
-
-    # The agent-harness election, gating the patchy chart's runners and the
-    # harness credential syncs; modules/secrets creates the matching secrets
-    # from the same value, and iam.tf derives the sync KSAs' reader roles
-    # from it. Same reserved name "none" convention as STACK_COMPONENTS: an
-    # empty string would re-trigger the manifests' claude := default.
-    AGENT_HARNESSES = coalesce(join(",", sort(var.patchy.harnesses)), "none")
-
-    # The agent-egress network-policy dialect the patchy chart renders.
-    # Terraform knows the answer for certain -- it installs Cilium as the only
-    # CNI (cilium.tf) -- so pin it rather than trusting the chart's `auto`
-    # capability probe, which the manifests themselves advise against when the
-    # creator knows (common/components/patchy/resourceset.yaml). Pinning also
-    # keeps renders deterministic and activates the broker's Cilium
-    # cloud-credentials policy (toEntities host for the EKS Pod Identity
-    # agent, which no ipBlock rule can reach under Cilium).
-    AGENT_EGRESS_POLICY = "cilium"
-
-    # The evaluation-controller toggle. "true"/"false" rather than the
-    # empty-string convention: it is a boolean, not an optional value, and
-    # the manifests' := default ("false") covers a terraform predating the
-    # key -- so publishing the literal keeps the two sides symmetric.
-    PATCHY_EVALUATION = var.patchy.evaluation.enabled ? "true" : "false"
 
     # Arbitrary SSO federation: the non-secret half of each connector,
     # JSON-encoded since a cluster var is a flat string. Defaults to "[]"
@@ -192,17 +211,25 @@ locals {
       for id, c in local.dex_connectors : merge({ id = id }, c)
     ]) : "[]"
 
-    # kubectl-via-dex: whether the dex component renders a PUBLIC static
-    # client (no secret) for the OIDC/PKCE flow kubelogin drives, its client
-    # id and the redirect URIs it must register verbatim. "true"/"false"
-    # rather than the empty-string convention -- same reasoning as
-    # PATCHY_EVALUATION, it's a boolean the manifests branch on directly.
-    # The identity provider config trusting these tokens at the API server
-    # is created straight from var.sso.kubectl in main.tf, not published
-    # here -- there is nothing for the manifests to do with it.
-    KUBECTL_OIDC_ENABLED       = var.sso.enabled && var.sso.kubectl.enabled ? "true" : "false"
-    KUBECTL_OIDC_CLIENT_ID     = var.sso.kubectl.client_id
-    KUBECTL_OIDC_REDIRECT_URIS = join(",", var.sso.kubectl.redirect_uris)
+    # Every OIDC relying party dex serves, platform and application alike:
+    # the flux-web client (when elected), the PUBLIC kubectl client
+    # (sso.kubectl, the OIDC/PKCE flow kubelogin drives, no secret) and each
+    # applications[*].dex_clients entry, JSON-encoded like DEX_CONNECTORS and
+    # for the same reason. The dex component renders staticClients from it
+    # and syncs ${SECRET_PREFIX}dex-client-<id> for every confidential
+    # client; the containers are minted from the same local (sso.tf), so the
+    # ids cannot drift. The identity provider config trusting the kubectl
+    # tokens at the API server is created straight from var.sso.kubectl in
+    # main.tf, not published here -- there is nothing for the manifests to
+    # do with it.
+    DEX_CLIENTS = var.sso.enabled ? jsonencode([
+      for id, c in local.dex_clients : {
+        id           = id
+        name         = c.name
+        public       = c.public
+        redirectURIs = c.redirect_uris
+      }
+    ]) : "[]"
 
     # --- Karpenter -------------------------------------------------------
     # Wiring the component needs to render its EC2NodeClass/NodePool.
@@ -228,22 +255,6 @@ locals {
     KARPENTER_CONSOLIDATION_POLICY = local.node_pool.consolidation_policy
     KARPENTER_CONSOLIDATE_AFTER    = local.node_pool.consolidate_after
     KARPENTER_EXPIRE_AFTER         = local.node_pool.expire_after
-
-    # --- Claude model provider (patchy's egress-broker) ------------------
-    # The broker terminates all claude-runner model traffic and proxies it to
-    # this provider. Keys are harness-scoped (CLAUDE_*, so codex/copilot could
-    # later publish CODEX_* siblings) and the knobs provider-prefixed
-    # (BEDROCK_REGION, never a generic REGION) - clarity over brevity,
-    # mirroring the broker's own PATCHY_BEDROCK_* env names. Only the aws
-    # provider pair is published: the manifests' aws tree never reads the
-    # vertex vars, and the common patchy core carries := defaults for them.
-    CLAUDE_PROVIDER              = local.claude_provider.name
-    CLAUDE_ANTHROPIC_AUTH        = local.claude_provider.anthropic_auth
-    CLAUDE_BEDROCK_REGION        = local.claude_provider.name == "bedrock" ? coalesce(local.claude_provider.bedrock_region, data.aws_region.current.region) : ""
-    CLAUDE_BEDROCK_REGION_PREFIX = local.claude_provider.bedrock_region_prefix != null ? local.claude_provider.bedrock_region_prefix : ""
-    # canonical=providerID pairs, comma-joined sorted - the same flat-string
-    # list pattern KARPENTER_* and STACK_COMPONENTS already prove.
-    CLAUDE_MODEL_MAP = join(",", [for k in sort(keys(local.claude_provider.model_map)) : "${k}=${local.claude_provider.model_map[k]}"])
     },
     # The RBAC subject groups, one var per role key in rbac.groups
     # (RBAC_GROUP_VIEWERS, RBAC_GROUP_DEVELOPERS, RBAC_GROUP_DEVOPS,
@@ -287,11 +298,14 @@ module "flux_operator" {
     artifact = var.flux.distribution.artifact
   }
   sync = {
-    url      = coalesce(var.flux.sync.url, local.default_sync_url)
+    url      = local.sync_url
     ref      = var.flux.sync.ref
     path     = var.flux.sync.path
     interval = var.flux.sync.interval
   }
+
+  applications     = local.applications
+  application_vars = var.application_vars
 
   signed_identity = {
     issuer             = local.signing_kms ? null : var.signed_identity.issuer
@@ -306,8 +320,8 @@ module "flux_operator" {
   cluster_vars      = merge(var.flux.cluster_vars, local.reserved_cluster_vars)
   namespaces        = var.flux.namespaces
 
-  # The manifests contract's fixed name for the Flux status web UI's Web Config
-  # Secret: composed in sso.tf, synced to flux-system by the manifests'
+  # The platform contract's fixed name for the Flux status web UI's Web Config
+  # Secret: composed in sso.tf, synced to flux-system by the platform's
   # flux-web component, hot-reloaded by the operator (it may arrive after
   # bootstrap, or never on an SSO-less cluster -- harmless).
   web_config_secret_name = "flux-web-auth"

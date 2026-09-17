@@ -1,15 +1,24 @@
 # flux-operator
 
-The flux bootstrap chain: three helm releases take an empty cluster to a reconciling GitOps platform in one apply - 
-`flux-operator` (the operator and its CRDs), `cluster-inputs` (the local chart carrying the `cluster-vars` ConfigMap and
-pre-created namespaces), and `flux-instance` (the `FluxInstance` the operator materialises controllers from).
+The flux bootstrap chain: three helm releases plus one per application take an empty cluster to a reconciling GitOps
+platform in one apply - `flux-operator` (the operator and its CRDs), `cluster-inputs` (the local chart carrying the
+`cluster-vars` ConfigMap, the per-application `<key>-vars` ConfigMaps and pre-created namespaces), `flux-instance` (the
+`FluxInstance` the operator materialises controllers from, syncing the platform entrypoint image), and
+`application-<key>` (the local `application` chart: the `ResourceSetInputProvider` + `ResourceSet` named
+`<key>-manifests` that resolve, verify and apply one application image).
 
-The operator and instance releases are **bootstrap-only** (`ignore_changes`): the stack's flux component adopts both by
-release name and follows the newest mirrored charts, so a flux-containers publish - never a terraform apply - upgrades
-flux on a running cluster. `cluster-inputs` stays terraform-reconciled, so cluster-vars changes flow through applies.
+The operator, instance and application releases are **bootstrap-only** (`ignore_changes`): the platform's flux
+component adopts the first two by release name and follows the newest mirrored charts, so a flux-containers publish -
+never a terraform apply - upgrades flux on a running cluster; each application image ships its own copy of its seed
+objects and owns them from its first reconcile. `cluster-inputs` stays terraform-reconciled, so cluster-vars and
+`<key>-vars` changes flow through applies.
 
-Signature enforcement on the manifests artifact rides in as a kustomize patch on the generated `flux-system`
-OCIRepository, since `FluxInstance.spec.sync` has no verify field.
+Signature enforcement on the platform entrypoint rides in as a kustomize patch on the generated `flux-system`
+OCIRepository, since `FluxInstance.spec.sync` has no verify field. Each application seed verifies its own image in the
+`OCIRepository` the `ResourceSet` emits: keyless (issuer + subject) or keyed against the `cosign-pub` Secret. The
+registry, never the cloud, picks how an image is listed and pulled - `ECRArtifactTag` / `provider: aws` under the
+platform prefix (the controllers' Pod Identity), `OCIArtifactTag` / `provider: generic` with an optional pull secret
+anywhere else.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -38,6 +47,7 @@ No modules.
 | [aws_eks_pod_identity_association.flux](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_pod_identity_association) | resource |
 | [aws_iam_role.flux](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.flux](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [helm_release.application](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release) | resource |
 | [helm_release.cluster_inputs](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release) | resource |
 | [helm_release.flux_instance](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release) | resource |
 | [helm_release.flux_operator](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release) | resource |
@@ -54,8 +64,10 @@ No modules.
 | operator\_chart | flux-operator helm chart location: the platform registry's charts/flux-operator, published by flux-containers<br/>(the artifact store must be populated before the first cluster bootstraps). A null version installs the latest<br/>available at create and pins it in state - later applies don't auto-upgrade. | <pre>object({<br/>    repository = string # e.g. oci://<registry>/charts<br/>    version    = optional(string)<br/>  })</pre> | n/a | yes |
 | registry\_arn | ARN pattern covering every repository beneath the platform registry prefix; the controllers' read grants are scoped to it. | `string` | n/a | yes |
 | signed\_identity | Cosign verification enforced on the generated flux-system OCIRepository, so an unsigned or tampered manifests<br/>artifact is never applied. Exactly one mode: keyless (issuer + manifests\_subject, Go regexps over the Fulcio<br/>certificate) or a signing key's public half (kms\_public\_key\_pem, distributed as the cosign-pub Secret the verify<br/>patch references - source-controller verifies against the public key and never calls the signing service). | <pre>object({<br/>    issuer             = optional(string)<br/>    manifests_subject  = optional(string)<br/>    kms_public_key_pem = optional(string)<br/>  })</pre> | n/a | yes |
-| sync | Cluster sync source: the flux-manifests artifact in the platform registry and the path within it. | <pre>object({<br/>    url      = string # oci://<registry>/flux-manifests<br/>    ref      = string # channel tag (stable, staging) or exact version<br/>    path     = string # the per-cloud entrypoint tree ("aws" for this module)<br/>    interval = optional(string, "5m")<br/>  })</pre> | n/a | yes |
-| cluster\_vars | The cluster-vars ConfigMap contents - every value the flux-manifests stack substitutes via<br/>postBuild.substituteFrom. | `map(string)` | `{}` | no |
+| sync | Cluster sync source: the platform entrypoint artifact in the platform registry and the path within it. | <pre>object({<br/>    url      = string # oci://<registry>/manifests/platform<br/>    ref      = string # channel tag (stable, staging, edge) or exact version<br/>    path     = string # the per-cloud tree ("aws" for this module)<br/>    interval = optional(string, "5m")<br/>  })</pre> | n/a | yes |
+| application\_vars | Per-application substitution ConfigMaps rendered by the cluster-inputs chart: one <key>-vars ConfigMap per<br/>entry, which the application's Kustomization substitutes from beside cluster-vars. Terraform-reconciled, so<br/>changes flow through applies. | `map(map(string))` | `{}` | no |
+| applications | Application manifest images to seed, keyed by short name, with every default already resolved by the caller.<br/>Each entry becomes one bootstrap-only helm release of the local application chart: a ResourceSetInputProvider<br/>and ResourceSet named <key>-manifests in the namespace, which resolve the newest tag matching semver, verify<br/>the image (keyless issuer + subject, or keyed against the cosign-pub Secret) and apply path from it as<br/>Kustomization <key>. platform says whether the image lives in the platform registry: then the flux controllers<br/>list its tags through the ECR API (ECRArtifactTag) and pull it with their Pod Identity (provider aws);<br/>otherwise the generic OCI listing and pull apply (OCIArtifactTag / generic), with pull\_secret naming a<br/>kubernetes.io/dockerconfigjson Secret in the namespace when the registry needs credentials. The image ships<br/>the same two seed objects and owns them from its first reconcile; the release is never reconciled again<br/>(ignore\_changes), and uninstalling it (removing the key) is what removes the application. | <pre>map(object({<br/>    url        = string<br/>    platform   = bool<br/>    semver     = string<br/>    path       = string<br/>    interval   = string<br/>    depends_on = set(string)<br/>    verify = object({<br/>      keyed   = bool<br/>      issuer  = optional(string)<br/>      subject = optional(string)<br/>    })<br/>    pull_secret = optional(string)<br/>    prune       = bool<br/>    wait        = bool<br/>    timeout     = string<br/>  }))</pre> | `{}` | no |
+| cluster\_vars | The cluster-vars ConfigMap contents - every value the platform manifests (and any application) substitute via<br/>postBuild.substituteFrom. | `map(string)` | `{}` | no |
 | kustomize\_patches | Extra kustomize patches applied to the generated Flux instance objects, on top of the built-in controller<br/>nodeSelector and flux-system OCIRepository verify patches. | `list(any)` | `[]` | no |
 | namespace | Namespace for the flux-operator and Flux controllers. | `string` | `"flux-system"` | no |
 | namespaces | Namespaces pre-created by the cluster-inputs chart (e.g. workload namespaces that must exist before their secrets<br/>arrive out-of-band); flux kustomizations adopt them via server-side apply. | `list(string)` | `[]` | no |
@@ -67,6 +79,7 @@ No modules.
 
 | Name | Description |
 | ---- | ----------- |
+| applications | The application seeds, keyed as var.applications: the bootstrap-only helm release name, the namespace the seed<br/>objects (<key>-manifests) live in, and the tag-listing provider the registry selected (ECRArtifactTag under the<br/>platform prefix, OCIArtifactTag elsewhere). |
 | namespace | Namespace the flux-operator and Flux controllers run in. |
 | registry\_reader\_roles | IAM role ARNs the flux controllers assume through Pod Identity - the identities that read the platform registry. |
 <!-- END_TF_DOCS -->

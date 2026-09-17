@@ -1,7 +1,7 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-# The delegated Route53 hosted zone (e.g. patchy.bitwisemedia.co.uk) is created
+# The delegated Route53 hosted zone (e.g. platform.example.com) is created
 # upstream and delegated from the parent domain once - it deliberately lives
 # outside this module so cluster destroy/recreate never touches the zone or its
 # NS delegation. This module only looks it up: validating it exists, deriving
@@ -31,10 +31,12 @@ data "aws_route53_zone" "cluster" {
 }
 
 locals {
-  # Zone apex without the trailing dot (patchy.bitwisemedia.co.uk.).
+  # Zone apex without the trailing dot (platform.example.com.).
   dns_domain = var.dns.zone_name != null ? trimsuffix(data.aws_route53_zone.cluster["public"].name, ".") : null
 
-  # The public host the patchy webhook is served on: the zone apex unless the
-  # caller narrows it to a sub-host.
-  patchy_domain = var.dns.zone_name != null ? coalesce(var.dns.host, local.dns_domain) : null
+  # The host the platform serves on (PLATFORM_DOMAIN): the zone apex unless
+  # the caller narrows it to a sub-host. The platform Gateway's wildcard
+  # listener covers *.<host>, so every platform and application route hangs
+  # off it by hostname.
+  platform_domain = var.dns.zone_name != null ? coalesce(var.dns.host, local.dns_domain) : null
 }

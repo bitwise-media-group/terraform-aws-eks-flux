@@ -424,45 +424,49 @@ run "cluster_vars_contract" {
   # fails on an absent value.
   assert {
     condition = alltrue([
-      for key in ["DNS_ZONE_NAME", "DNS_PUBLIC_ZONE_ID", "DNS_PRIVATE_ZONE_ID", "DNS_DOMAIN", "PATCHY_DOMAIN", "ACME_EMAIL", "OTEL_AMP_ENDPOINT", "SIGNED_IDENTITY_KMS_KEY", "COSIGN_PUBLIC_KEY"] :
+      for key in ["DNS_ZONE_NAME", "DNS_PUBLIC_ZONE_ID", "DNS_PRIVATE_ZONE_ID", "DNS_DOMAIN", "PLATFORM_DOMAIN", "ACME_EMAIL", "OTEL_AMP_ENDPOINT", "SIGNED_IDENTITY_KMS_KEY", "COSIGN_PUBLIC_KEY"] :
       local.reserved_cluster_vars[key] == ""
     ])
     error_message = "unset optional surfaces must publish empty strings, not null"
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.DEX_CONNECTORS == "[]"
-    error_message = "without sso, DEX_CONNECTORS must publish the empty JSON array (not the empty string -- the manifests unconditionally mustFromJson-parse it)"
+    condition     = local.reserved_cluster_vars.DEX_CONNECTORS == "[]" && local.reserved_cluster_vars.DEX_CLIENTS == "[]"
+    error_message = "without sso, DEX_CONNECTORS and DEX_CLIENTS must publish the empty JSON array (not the empty string -- the manifests unconditionally mustFromJson-parse them)"
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.STACK_COMPONENTS == "flux-web,patchy"
-    error_message = "the default election is the whole optional tier, comma-joined and sorted"
+    condition     = local.reserved_cluster_vars.PLATFORM_COMPONENTS == "flux-web"
+    error_message = "the default election is flux-web alone, comma-joined and sorted (arc is opt-in, dex rides sso)"
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.AGENT_HARNESSES == "claude"
-    error_message = "the default harness election must publish claude alone"
+    condition     = local.reserved_cluster_vars.PLATFORM_TREE == "aws"
+    error_message = "PLATFORM_TREE must publish flux.sync.path, so applications select the same per-cloud tree the platform syncs"
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.AGENT_EGRESS_POLICY == "cilium"
-    error_message = "the egress-policy dialect must be pinned to cilium: terraform installs the CNI, and the chart's auto probe must not be trusted where the creator knows (it also gates the broker's Pod Identity host-entity policy)"
+    condition     = endswith(local.reserved_cluster_vars.FLUX_SYNC_URL, "/manifests/platform") && startswith(local.reserved_cluster_vars.FLUX_SYNC_URL, "oci://${var.platform_registry.url}/")
+    error_message = "the sync must default to the platform entrypoint image under the platform registry, and publish it so the flux component can re-point a running cluster"
+  }
+
+  # The generic-module guard: nothing application-specific may be published.
+  assert {
+    condition = length([
+      for key in keys(local.reserved_cluster_vars) : key
+      if key == "STACK_COMPONENTS" || startswith(key, "PATCHY_") || startswith(key, "CLAUDE_") || startswith(key, "AGENT_") || startswith(key, "KUBECTL_OIDC_")
+    ]) == 0
+    error_message = "the cluster module knows no application: no STACK_COMPONENTS, PATCHY_*, CLAUDE_*, AGENT_* or KUBECTL_OIDC_* key may be published (application vars ride in <key>-vars; the kubectl client rides in DEX_CLIENTS)"
   }
 
   assert {
-    condition     = contains(keys(local.workload_grants), "secrets-patchy-patchy-secrets")
-    error_message = "electing patchy must derive the patchy-namespace secret-reader identity (the GitHub App and anthropic syncs) rather than requiring the caller to list it"
-  }
-
-  assert {
-    condition     = !contains(keys(local.workload_grants), "secrets-patchy-agents-patchy-secrets")
-    error_message = "the brokered claude harness mounts no credential into agent pods: no agent-namespace reader may exist by default"
+    condition     = length([for key in keys(local.workload_grants) : key if startswith(key, "secrets-")]) == 0
+    error_message = "without sso or caller-listed readers, no secret-reader role may exist - the module derives none from any application"
   }
 
   assert {
     condition     = local.reserved_cluster_vars.SIGNED_IDENTITY_MANIFESTS == var.signed_identity.manifests_subject
-    error_message = "the manifests signing subject must reach the stack: its flux component re-renders the FluxInstance and needs it for the sync verify patch"
+    error_message = "the manifests signing subject must reach the platform: its flux component re-renders the FluxInstance and needs it for the sync verify patch"
   }
 
   assert {
@@ -485,104 +489,9 @@ run "cluster_vars_contract" {
     error_message = "without network.pod_subnet_ids, the cilium component's eni.subnetIDsFilter must narrow to node_subnet_ids, JSON-encoded and sorted"
   }
 
-  # The claude runner's model provider (patchy's egress-broker) defaults to
-  # first-party Anthropic with OAuth-token auth.
   assert {
-    condition     = local.reserved_cluster_vars.CLAUDE_PROVIDER == "anthropic"
-    error_message = "the claude provider must default to first-party anthropic"
-  }
-
-  assert {
-    condition     = local.reserved_cluster_vars.CLAUDE_ANTHROPIC_AUTH == "token"
-    error_message = "anthropic auth must default to token (OAuth), not an API key"
-  }
-
-  assert {
-    condition = alltrue([
-      for key in ["CLAUDE_BEDROCK_REGION", "CLAUDE_BEDROCK_REGION_PREFIX", "CLAUDE_MODEL_MAP"] :
-      local.reserved_cluster_vars[key] == ""
-    ])
-    error_message = "provider knobs that do not apply must publish empty strings, not null"
-  }
-
-  assert {
-    condition     = length([for key in keys(local.reserved_cluster_vars) : key if strcontains(key, "VERTEX")]) == 0
-    error_message = "only the aws provider pair is published: the manifests' aws tree never reads the vertex vars (the common patchy core carries := defaults for them)"
-  }
-
-  assert {
-    condition     = local.reserved_cluster_vars.PATCHY_EVALUATION == "false"
-    error_message = "the evaluation controller must default off, published as the literal \"false\" (not the empty string -- it is a boolean toggle, and the manifests' := default matches)"
-  }
-}
-
-run "agent_harness_election" {
-  command = plan
-
-  variables {
-    patchy = {
-      harnesses = ["copilot", "claude"]
-    }
-  }
-
-  assert {
-    condition     = local.reserved_cluster_vars.AGENT_HARNESSES == "claude,copilot"
-    error_message = "the harness election must publish sorted and comma-joined, like STACK_COMPONENTS"
-  }
-
-  assert {
-    condition     = contains(keys(local.workload_grants), "secrets-patchy-agents-patchy-secrets")
-    error_message = "a non-brokered harness mounts its credential into agent pods, so its election must derive the agent-namespace secret reader"
-  }
-}
-
-run "agent_harness_election_empty" {
-  command = plan
-
-  variables {
-    patchy = {
-      harnesses = []
-    }
-  }
-
-  assert {
-    condition     = local.reserved_cluster_vars.AGENT_HARNESSES == "none"
-    error_message = "an empty election must publish the reserved name none -- an empty string would re-trigger the manifests' claude := default"
-  }
-}
-
-run "claude_bedrock_provider" {
-  command = plan
-
-  variables {
-    patchy = {
-      claude = {
-        provider = {
-          name = "bedrock"
-          model_map = {
-            "anthropic/claude-opus-5"   = "us.anthropic.claude-opus-5"
-            "anthropic/claude-sonnet-5" = "us.anthropic.claude-sonnet-5"
-          }
-        }
-      }
-    }
-  }
-
-  assert {
-    condition     = local.reserved_cluster_vars.CLAUDE_BEDROCK_REGION == "eu-west-2"
-    error_message = "an unset bedrock_region must fall back to the cluster's own region, never an empty string"
-  }
-
-  assert {
-    condition     = local.reserved_cluster_vars.CLAUDE_MODEL_MAP == "anthropic/claude-opus-5=us.anthropic.claude-opus-5,anthropic/claude-sonnet-5=us.anthropic.claude-sonnet-5"
-    error_message = "the model map arrives as comma-joined sorted canonical=providerID pairs - the flat-string list pattern the stack already proves"
-  }
-
-  # bedrock is the one provider needing cloud credentials, so it alone brings
-  # the broker's invoke grant with it.
-  assert {
-    condition     = contains(keys(local.workload_grants), "patchy-egress-broker")
-    error_message = "the bedrock provider must grant the egress-broker's KSA Bedrock invoke permissions"
+    condition     = length(module.flux_operator.applications) == 0 && length(output.flux.applications) == 0
+    error_message = "a cluster with no applications seeds nothing - the platform alone is a complete deployment"
   }
 }
 
@@ -698,12 +607,42 @@ run "empty_election_publishes_none" {
   command = plan
 
   variables {
-    stack_components = []
+    platform_components = []
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.STACK_COMPONENTS == "none"
+    condition     = local.reserved_cluster_vars.PLATFORM_COMPONENTS == "none"
     error_message = "an explicitly empty election must publish the reserved name none - an empty string would re-trigger the manifests' elect-everything default"
+  }
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.dex_client) == 0 && length(aws_secretsmanager_secret.flux_web_auth_config) == 0
+    error_message = "an unelected flux-web gets no client pair and no config document"
+  }
+}
+
+run "platform_components_reject_unknown" {
+  command = plan
+
+  variables {
+    platform_components = ["flux-web", "patchy"]
+  }
+
+  # patchy is an application, not a component: it arrives through
+  # var.applications as its own image, never through the election.
+  expect_failures = [var.platform_components]
+}
+
+run "arc_is_electable" {
+  command = plan
+
+  variables {
+    platform_components = ["flux-web", "arc"]
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.PLATFORM_COMPONENTS == "arc,flux-web"
+    error_message = "electing arc must publish it sorted into the election the platform entrypoint ranges over"
   }
 }
 
@@ -723,8 +662,8 @@ run "dns_and_gateway_surface" {
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.PATCHY_DOMAIN == "patchy.bitwisemedia.co.uk"
-    error_message = "the served host defaults to the zone apex unless dns.host narrows it"
+    condition     = local.reserved_cluster_vars.PLATFORM_DOMAIN == "patchy.bitwisemedia.co.uk"
+    error_message = "the served host (PLATFORM_DOMAIN, the wildcard listener's apex) defaults to the zone apex unless dns.host narrows it"
   }
 
   assert {
@@ -854,8 +793,16 @@ run "sso_surface" {
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.STACK_COMPONENTS == "dex,flux-web,patchy"
+    condition     = local.reserved_cluster_vars.PLATFORM_COMPONENTS == "dex,flux-web"
     error_message = "dex is not elected directly - it joins the election exactly when sso is on"
+  }
+
+  # DEX_CLIENTS carries every relying party dex renders: the platform's
+  # flux-web client here (sso.kubectl is off), in the shape the dex component
+  # ranges over.
+  assert {
+    condition     = jsondecode(local.reserved_cluster_vars.DEX_CLIENTS) == [{ id = "flux-web", name = "Flux Status", public = false, redirectURIs = ["https://flux.patchy.bitwisemedia.co.uk/oauth2/callback"] }]
+    error_message = "with flux-web elected and sso on, DEX_CLIENTS must publish exactly the flux-web confidential client with its callback on the served domain"
   }
 
   assert {
@@ -894,8 +841,8 @@ run "sso_surface" {
   }
 
   assert {
-    condition     = length(aws_secretsmanager_secret.dex_client) == 2
-    error_message = "both elected relying parties must get a generated client pair"
+    condition     = length(aws_secretsmanager_secret.dex_client) == 1 && aws_secretsmanager_secret.dex_client["flux-web"].name == "patchy-x-dex-client-flux-web"
+    error_message = "the one elected confidential relying party must get a generated client pair under the secret prefix"
   }
 
   assert {
@@ -904,8 +851,8 @@ run "sso_surface" {
   }
 
   assert {
-    condition     = aws_secretsmanager_secret_version.dex_client["patchy-status"].secret_string_wo_version == 1
-    error_message = "a client absent from sso.clients must sit at version 1"
+    condition     = local.secret_reader_roles["dex-client-flux-web"].roles == ["secrets-dex-dex-secrets"]
+    error_message = "a platform client's raw secret is readable by dex alone"
   }
 
   assert {
@@ -959,7 +906,7 @@ run "sso_connector_mechanism_is_generic" {
   }
 
   assert {
-    condition     = length(aws_secretsmanager_secret.dex_client) == 2
+    condition     = length(aws_secretsmanager_secret.dex_client) == 1
     error_message = "the generated client pairs are independent of the connector declarations"
   }
 }
@@ -978,43 +925,6 @@ run "sso_requires_connector" {
   }
 
   expect_failures = [var.sso]
-}
-
-run "evaluation_controller_election" {
-  command = plan
-
-  variables {
-    dns = {
-      zone_name  = "patchy.bitwisemedia.co.uk"
-      acme_email = "platform@bitwisemedia.co.uk"
-    }
-    sso = {
-      enabled = true
-      connector = {
-        type = "google"
-      }
-    }
-    patchy = {
-      evaluation = { enabled = true }
-    }
-  }
-
-  assert {
-    condition     = local.reserved_cluster_vars.PATCHY_EVALUATION == "true"
-    error_message = "enabling the evaluation controller must publish PATCHY_EVALUATION as the literal \"true\""
-  }
-}
-
-run "evaluation_requires_sso" {
-  command = plan
-
-  variables {
-    patchy = {
-      evaluation = { enabled = true }
-    }
-  }
-
-  expect_failures = [var.patchy]
 }
 
 run "sso_clients_reject_unknown_ids" {
@@ -1127,14 +1037,21 @@ run "kubectl_oidc_federation" {
     error_message = "groups_claim_prefix must default to a non-empty prefix so an asserted claim can't collide with system: or IAM-sourced group names"
   }
 
+  # The kubectl client is a PUBLIC dex client (PKCE, no secret) published in
+  # DEX_CLIENTS beside flux-web - there is no KUBECTL_OIDC_* surface.
   assert {
-    condition     = local.reserved_cluster_vars.KUBECTL_OIDC_ENABLED == "true"
-    error_message = "enabling kubectl OIDC must publish KUBECTL_OIDC_ENABLED as the literal \"true\" so the dex component renders the public static client"
+    condition     = one([for c in jsondecode(local.reserved_cluster_vars.DEX_CLIENTS) : c if c.id == "kubectl-oidc"]).public == true
+    error_message = "enabling kubectl OIDC must publish a public kubectl-oidc client in DEX_CLIENTS for the dex component to render"
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.KUBECTL_OIDC_CLIENT_ID == "kubectl-oidc"
-    error_message = "client_id must default to kubectl-oidc"
+    condition     = one([for c in jsondecode(local.reserved_cluster_vars.DEX_CLIENTS) : c if c.id == "kubectl-oidc"]).redirectURIs == ["http://localhost:8000/callback"]
+    error_message = "the kubectl client must register kubelogin's redirect URIs verbatim"
+  }
+
+  assert {
+    condition     = !contains(keys(aws_secretsmanager_secret.dex_client), "kubectl-oidc")
+    error_message = "a public client mints no secret"
   }
 }
 
@@ -1192,4 +1109,400 @@ run "direct_store_reads_expose_principals" {
     condition     = length(local.registry_reader_principals) == 6
     error_message = "registry_reader_principals must cover both node roles, both flux controllers and both kyverno controllers"
   }
+}
+
+run "workload_grants_become_pod_identity" {
+  command = plan
+
+  variables {
+    workload_grants = {
+      egress-broker = {
+        namespace       = "demo"
+        service_account = "demo-egress-broker"
+        policy          = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"bedrock:InvokeModel\"],\"Resource\":\"*\"}]}"
+      }
+    }
+    workload_identity = {
+      secret_readers = [{ namespace = "demo", service_account = "demo-secrets" }]
+    }
+  }
+
+  # An application's cloud grant arrives as data: the module mints the role
+  # (<cluster>-<key>, so an application module can name it from the static
+  # rule) and binds it through Pod Identity, verbatim policy attached.
+  assert {
+    condition     = aws_iam_role.workload["egress-broker"].name == "patchy-x-egress-broker"
+    error_message = "a workload_grants entry must become a role named <cluster>-<key>"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.workload["egress-broker"].namespace == "demo" && aws_eks_pod_identity_association.workload["egress-broker"].service_account == "demo-egress-broker"
+    error_message = "a workload_grants entry must bind its pair through a Pod Identity association"
+  }
+
+  assert {
+    condition     = strcontains(aws_iam_role_policy.workload["egress-broker"].policy, "bedrock:InvokeModel")
+    error_message = "the caller's policy document must attach verbatim"
+  }
+
+  # The podless readers stay the IRSA exception, keyed by the published rule.
+  assert {
+    condition     = contains(keys(local.secret_reader_grants), "secrets-demo-demo-secrets") && !contains(keys(aws_eks_pod_identity_association.workload), "secrets-demo-demo-secrets")
+    error_message = "a caller-listed secret reader must get an IRSA role and never a Pod Identity association"
+  }
+
+  assert {
+    condition     = output.secrets_role_prefix == "arn:aws:iam::123456789012:role/patchy-x-secrets-"
+    error_message = "the reader role prefix must be exported so application wiring can compose <prefix><ns>-<sa>"
+  }
+
+  assert {
+    condition     = contains(keys(output.workload_roles), "egress-broker") && contains(keys(output.workload_roles), "secrets-demo-demo-secrets")
+    error_message = "every minted role must be exported by its key"
+  }
+}
+
+run "workload_grants_reject_platform_keys" {
+  command = plan
+
+  variables {
+    workload_grants = {
+      external-dns = { namespace = "x", service_account = "y", policy = "{}" }
+    }
+  }
+
+  expect_failures = [var.workload_grants]
+}
+
+run "applications_seeded" {
+  command = plan
+
+  variables {
+    applications = {
+      demo = {
+        url        = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+        semver     = "<1.0.0 >=0.1.0"
+        depends_on = ["kyverno-policies", "gateway"]
+        verify     = { subject = "^https://github\\.com/org/demo-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$" }
+      }
+      external = {
+        url         = "oci://ghcr.io/org/external-manifests"
+        path        = "./deploy/eks"
+        verify      = { issuer = "^https://token\\.actions\\.githubusercontent\\.com$", subject = "^https://github\\.com/org/external/.+$" }
+        pull_secret = "ghcr-pull"
+      }
+    }
+  }
+
+  # The registry, never the cloud, picks the listing/pull dialect: under the
+  # platform prefix the flux controllers reach ECR with their Pod Identity;
+  # anywhere else is a generic OCI listing and pull.
+  assert {
+    condition     = output.flux.applications["demo"].tag_provider == "ECRArtifactTag" && output.flux.applications["demo"].oci_provider == "aws"
+    error_message = "an image under the platform registry must be listed with ECRArtifactTag and pulled as provider aws"
+  }
+
+  assert {
+    condition     = output.flux.applications["external"].tag_provider == "OCIArtifactTag" && output.flux.applications["external"].oci_provider == "generic"
+    error_message = "an image outside the platform registry must be listed with OCIArtifactTag and pulled as provider generic"
+  }
+
+  # Defaults resolve against cluster facts: the per-cloud tree the platform
+  # syncs, and the platform's own keyless issuer.
+  assert {
+    condition     = output.flux.applications["demo"].path == "./deploy/aws" && output.flux.applications["external"].path == "./deploy/eks"
+    error_message = "path must default to ./deploy/<flux.sync.path> and pass through when set"
+  }
+
+  assert {
+    condition     = local.applications["demo"].verify.issuer == var.signed_identity.issuer && local.applications["external"].verify.issuer == "^https://token\\.actions\\.githubusercontent\\.com$"
+    error_message = "a keyless application's issuer must default to signed_identity.issuer and pass through when set"
+  }
+
+  assert {
+    condition     = output.flux.applications["demo"].release == "application-demo" && output.flux.applications["demo"].namespace == "flux-system"
+    error_message = "each application must seed one bootstrap-only release in flux-system"
+  }
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.dex_client) == 0
+    error_message = "applications without dex clients mint no secrets"
+  }
+}
+
+run "applications_reject_unverified" {
+  command = plan
+
+  variables {
+    applications = {
+      demo = {
+        url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+        verify = {}
+      }
+    }
+  }
+
+  expect_failures = [var.applications]
+}
+
+run "applications_reject_keyed_without_kms" {
+  command = plan
+
+  variables {
+    applications = {
+      demo = {
+        url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+        verify = { keyed = true }
+      }
+    }
+  }
+
+  expect_failures = [var.applications]
+}
+
+run "applications_reject_foreign_ecr" {
+  command = plan
+
+  variables {
+    applications = {
+      demo = {
+        url    = "oci://999988887777.dkr.ecr.eu-west-2.amazonaws.com/other/manifests/demo"
+        verify = { subject = "^https://github\\.com/org/demo/.+$" }
+      }
+    }
+  }
+
+  # The flux controllers hold pull rights on the platform prefix alone, so an
+  # ECR image anywhere else could never be listed or pulled.
+  expect_failures = [var.applications]
+}
+
+run "applications_reject_platform_names" {
+  command = plan
+
+  variables {
+    applications = {
+      kyverno = {
+        url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/kyverno"
+        verify = { subject = "^https://github\\.com/org/kyverno/.+$" }
+      }
+    }
+  }
+
+  expect_failures = [var.applications]
+}
+
+run "applications_reject_tagged_url" {
+  command = plan
+
+  variables {
+    applications = {
+      demo = {
+        url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo:1.2.3"
+        verify = { subject = "^https://github\\.com/org/demo/.+$" }
+      }
+    }
+  }
+
+  expect_failures = [var.applications]
+}
+
+run "application_dex_clients" {
+  command = plan
+
+  variables {
+    dns = {
+      zone_name  = "patchy.bitwisemedia.co.uk"
+      acme_email = "platform@bitwisemedia.co.uk"
+    }
+    sso = {
+      enabled   = true
+      connector = { type = "google" }
+    }
+    secret_prefix = "patchy-x-"
+    workload_identity = {
+      secret_readers = [{ namespace = "demo", service_account = "demo-secrets" }]
+    }
+    applications = {
+      demo = {
+        url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+        verify = { subject = "^https://github\\.com/org/demo/.+$" }
+        dex_clients = {
+          demo-status = {
+            name          = "Demo Status"
+            redirect_uris = ["https://demo.patchy.bitwisemedia.co.uk/auth/callback"]
+            readers       = ["demo/demo-secrets"]
+            version       = 2
+          }
+          demo-cli = {
+            public        = true
+            redirect_uris = ["http://localhost:9000/callback"]
+          }
+        }
+      }
+    }
+  }
+
+  # Every client, platform and application, lands in the one DEX_CLIENTS
+  # list the dex component renders from, sorted by id.
+  assert {
+    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CLIENTS) : c.id] == ["demo-cli", "demo-status", "flux-web"]
+    error_message = "DEX_CLIENTS must carry the application's clients beside the platform's, sorted by id"
+  }
+
+  assert {
+    condition     = one([for c in jsondecode(local.reserved_cluster_vars.DEX_CLIENTS) : c if c.id == "demo-cli"]).name == "demo-cli"
+    error_message = "a client's display name must default to its id"
+  }
+
+  # A confidential client mints its secret under the static name the
+  # application's own wiring can predict; a public client mints nothing.
+  assert {
+    condition     = aws_secretsmanager_secret.dex_client["demo-status"].name == "patchy-x-dex-client-demo-status" && !contains(keys(aws_secretsmanager_secret.dex_client), "demo-cli")
+    error_message = "a confidential application client must mint <prefix>dex-client-<id>; a public one must not"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret_version.dex_client["demo-status"].secret_string_wo_version == 2
+    error_message = "an application client's version must drive its secret's rotation"
+  }
+
+  # dex always reads the raw secret; the client's declared readers (the
+  # application's own sync KSAs) join it.
+  assert {
+    condition     = toset(local.secret_reader_roles["dex-client-demo-status"].roles) == toset(["secrets-dex-dex-secrets", "secrets-demo-demo-secrets"])
+    error_message = "a confidential client's secret must admit dex and exactly the readers the client declares"
+  }
+
+  assert {
+    condition     = output.sso.clients["demo-status"].public == false && output.sso.clients["demo-cli"].public == true
+    error_message = "the sso output must list every registered client with its kind"
+  }
+}
+
+run "application_dex_client_requires_sso" {
+  command = plan
+
+  variables {
+    applications = {
+      demo = {
+        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+        verify      = { subject = "^https://github\\.com/org/demo/.+$" }
+        dex_clients = { demo-status = {} }
+      }
+    }
+  }
+
+  expect_failures = [var.applications]
+}
+
+run "application_dex_client_rejects_platform_ids" {
+  command = plan
+
+  variables {
+    dns = {
+      zone_name  = "patchy.bitwisemedia.co.uk"
+      acme_email = "platform@bitwisemedia.co.uk"
+    }
+    sso = {
+      enabled   = true
+      connector = { type = "google" }
+    }
+    applications = {
+      demo = {
+        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+        verify      = { subject = "^https://github\\.com/org/demo/.+$" }
+        dex_clients = { flux-web = {} }
+      }
+    }
+  }
+
+  expect_failures = [var.applications]
+}
+
+run "application_dex_client_ids_unique_across_apps" {
+  command = plan
+
+  variables {
+    dns = {
+      zone_name  = "patchy.bitwisemedia.co.uk"
+      acme_email = "platform@bitwisemedia.co.uk"
+    }
+    sso = {
+      enabled   = true
+      connector = { type = "google" }
+    }
+    applications = {
+      one = {
+        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/one"
+        verify      = { subject = "^https://github\\.com/org/one/.+$" }
+        dex_clients = { status = { public = true } }
+      }
+      two = {
+        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/two"
+        verify      = { subject = "^https://github\\.com/org/two/.+$" }
+        dex_clients = { status = { public = true } }
+      }
+    }
+  }
+
+  expect_failures = [var.applications]
+}
+
+run "application_dex_client_readers_must_be_declared" {
+  command = plan
+
+  variables {
+    dns = {
+      zone_name  = "patchy.bitwisemedia.co.uk"
+      acme_email = "platform@bitwisemedia.co.uk"
+    }
+    sso = {
+      enabled   = true
+      connector = { type = "google" }
+    }
+    applications = {
+      demo = {
+        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+        verify      = { subject = "^https://github\\.com/org/demo/.+$" }
+        dex_clients = { demo-status = { readers = ["demo/demo-secrets"] } }
+      }
+    }
+  }
+
+  # A reader with no role behind it (not listed in
+  # workload_identity.secret_readers) could never be admitted.
+  expect_failures = [var.applications]
+}
+
+run "application_vars_render" {
+  command = plan
+
+  variables {
+    application_vars = {
+      demo = {
+        DEMO_DOMAIN    = "demo.example.com"
+        DEMO_HARNESSES = "claude"
+      }
+    }
+  }
+
+  # The rendering itself (one <key>-vars ConfigMap per entry) is asserted in
+  # the flux-operator module's own suite; here the contract is separation.
+  assert {
+    condition     = !contains(keys(local.reserved_cluster_vars), "DEMO_DOMAIN") && !contains(keys(output.flux.cluster_vars), "DEMO_DOMAIN")
+    error_message = "application vars must never leak into cluster-vars"
+  }
+}
+
+run "application_vars_reject_lowercase_keys" {
+  command = plan
+
+  variables {
+    application_vars = {
+      demo = { demoDomain = "x" }
+    }
+  }
+
+  expect_failures = [var.application_vars]
 }

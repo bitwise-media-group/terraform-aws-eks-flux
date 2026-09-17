@@ -31,6 +31,11 @@ output "cluster_vars" {
 }
 
 output "sso" {
-  description = "SSO secrets this cluster owns: the generated dex client pairs and composed config documents."
+  description = "SSO facts this cluster owns: the registered clients, the generated dex client secrets and composed config documents."
   value       = module.cluster.sso
+}
+
+output "applications" {
+  description = "The seeded applications: per key, the seed release and how its image is listed and pulled."
+  value       = module.cluster.flux.applications
 }

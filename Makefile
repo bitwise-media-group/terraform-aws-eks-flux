@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 #
 # terraform-aws-eks-flux — EKS cluster (Cilium ENI, Karpenter) + ECR artifact
-# store + flux-operator bootstrap for the patchy platform.
+# store + flux-operator bootstrap for a generic flux-managed platform.
 #
 # Everything lives in mise tasks: the terraform archetype (init/plan/validate
 # machinery + pinned tools) comes from the shared toolchain submodule at

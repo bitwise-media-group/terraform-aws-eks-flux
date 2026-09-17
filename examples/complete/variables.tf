@@ -90,10 +90,10 @@ variable "secret_prefix" {
   default     = null
 }
 
-variable "stack_components" {
-  description = "The flux-manifests optional-tier components this cluster elects."
+variable "platform_components" {
+  description = "The platform's electable-tier components this cluster elects (flux-web, arc)."
   type        = set(string)
-  default     = ["flux-web", "patchy"]
+  default     = ["flux-web", "arc"]
 }
 
 variable "sso" {
@@ -114,31 +114,10 @@ variable "sso" {
   default = {}
 }
 
-variable "patchy" {
-  description = "Patchy platform knobs: the model provider its egress-broker proxies claude-runner traffic to, published as the CLAUDE_* cluster vars; evaluation.enabled deploys the evaluation controller (PATCHY_EVALUATION), which requires sso."
-  type = object({
-    claude = optional(object({
-      provider = optional(object({
-        name                  = optional(string, "anthropic")
-        anthropic_auth        = optional(string, "token")
-        bedrock_region        = optional(string)
-        bedrock_region_prefix = optional(string)
-        model_map             = optional(map(string), {})
-      }), {})
-    }), {})
-
-    evaluation = optional(object({
-      enabled = optional(bool, false)
-    }), {})
-  })
-  default = {}
-}
-
 variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)
   default = {
     env = "x"
-    app = "patchy"
   }
 }

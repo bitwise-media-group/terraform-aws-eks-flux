@@ -1,11 +1,14 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-# IAM identities for the flux-deployed platform workloads. The
-# namespace/service-account pairs are the terraform <-> flux-manifests contract
-# (overridable via var.workload_identity so this repo can track a manifests
-# change without a schema change) - the pairs themselves are cloud-neutral, so
-# every cluster consumes the same manifests.
+# IAM identities for the flux-deployed workloads. The platform's
+# namespace/service-account pairs are the terraform <-> platform-manifests
+# contract (overridable via var.workload_identity so this repo can track a
+# manifests change without a schema change) - the pairs themselves are
+# cloud-neutral, so every cluster consumes the same manifests. Application
+# grants arrive through the generic var.workload_grants map (a role and a Pod
+# Identity association per entry) and var.workload_identity.secret_readers
+# (podless IRSA readers); this module knows no application by name.
 #
 # Workloads with a real pod bind through EKS Pod Identity associations. The
 # secret readers are the one exception: the secrets-store-sync-controller
@@ -84,32 +87,18 @@ locals {
   # provider's trust conditions are the issuer with its scheme stripped.
   oidc_issuer_host = trimprefix(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://")
 
-  # The sync KSAs the patchy component's out-of-band secret syncs imply,
-  # derived from the election the same way sso.tf derives the SSO pairs (the
-  # secrets themselves live upstream, in a durable modules/secrets root): the
-  # patchy-namespace reader exists with the component (the GitHub App sync is
-  # unconditional, and the egress broker's anthropic token rides the same
-  # KSA); the agent-namespace reader only when a non-brokered harness
-  # (codex/copilot) mounts its credential into the agent pods.
-  patchy_secret_readers = concat(
-    contains(var.stack_components, "patchy") ? [{ namespace = "patchy", service_account = "patchy-secrets" }] : [],
-    contains(var.stack_components, "patchy") && length(setintersection(var.patchy.harnesses, ["codex", "copilot"])) > 0 ? [
-      { namespace = "patchy-agents", service_account = "patchy-secrets" }
-    ] : [],
-  )
-
   # The KSAs the secrets-store-sync-controller runs as, one per consuming
   # namespace: the pairs the SSO surface implies (derived in sso.tf from the
-  # election), the pairs the patchy election implies (above), plus any
-  # extras the caller names -- setunion(), because the derivations overlap
-  # (SSO + patchy both imply patchy/patchy-secrets) and a for-expression
-  # errors on a duplicate key. Scoped to this cluster's SECRET_PREFIX so
-  # clusters sharing an account cannot read each other's secrets; each
+  # election) plus every pair the caller names (an application module's
+  # secret_readers output, wired through workload_identity.secret_readers)
+  # -- setunion(), because the two may overlap and a for-expression errors on
+  # a duplicate key. Scoped to this cluster's SECRET_PREFIX so clusters
+  # sharing an account cannot read each other's secrets; each
   # module-authored secret's own policy (sso.tf) narrows it further.
   # Kept apart from the pod-bound grants because these roles trust the IRSA
   # OIDC provider, not Pod Identity (see the header comment).
   secret_reader_grants = {
-    for reader in setunion(local.sso_secret_readers, local.patchy_secret_readers, var.workload_identity.secret_readers) :
+    for reader in setunion(local.sso_secret_readers, var.workload_identity.secret_readers) :
     "secrets-${reader.namespace}-${reader.service_account}" => {
       namespace       = reader.namespace
       service_account = reader.service_account
@@ -119,7 +108,9 @@ locals {
 
   # name -> { namespace, service_account, policy }. Every entry becomes one IAM
   # role and one inline policy; every entry except the podless secret readers
-  # also becomes a Pod Identity association.
+  # also becomes a Pod Identity association. The platform's grants first,
+  # then the caller's application grants (var.workload_grants, whose keys are
+  # validated never to collide), then the secret readers.
   workload_grants = merge(
     # DNS-01 challenges and record publication both need the same write on the
     # delegated zone; absent entirely when the DNS surface is off.
@@ -158,17 +149,10 @@ locals {
         policy          = data.aws_iam_policy_document.kyverno.json
       }
     },
-    # patchy's egress-broker terminates all claude-runner model traffic; only
-    # the bedrock provider needs cloud credentials (anthropic uses an API key
-    # or OAuth token the broker gets out of band), so the grant exists exactly
-    # when the provider is bedrock.
-    var.patchy.claude.provider.name != "bedrock" ? {} : {
-      patchy-egress-broker = {
-        namespace       = var.workload_identity.patchy_egress_broker.namespace
-        service_account = var.workload_identity.patchy_egress_broker.service_account
-        policy          = data.aws_iam_policy_document.bedrock_invoke[0].json
-      }
-    },
+    # Application grants, verbatim: the policy document is the application
+    # module's to write (a model-invoke grant, a bucket, a queue); this module
+    # only mints the role and binds it to the pair.
+    var.workload_grants,
     local.secret_reader_grants,
   )
 }
@@ -353,30 +337,6 @@ data "aws_iam_policy_document" "kyverno" {
   }
 }
 
-# The egress-broker's Bedrock invoke grant, Anthropic models only. The
-# foundation-model ARN is region-wildcarded because cross-region inference
-# profiles invoke foundation models in sibling regions of the profile's geo
-# (and foundation-model ARNs carry an empty account field); the
-# inference-profile ARN stays pinned to this cluster's region and account.
-data "aws_iam_policy_document" "bedrock_invoke" {
-  count = var.patchy.claude.provider.name == "bedrock" ? 1 : 0
-
-  statement {
-    sid    = "InvokeAnthropicModels"
-    effect = "Allow"
-
-    actions = [
-      "bedrock:InvokeModel",
-      "bedrock:InvokeModelWithResponseStream",
-    ]
-
-    resources = [
-      "arn:${local.partition}:bedrock:*::foundation-model/anthropic.*",
-      "arn:${local.partition}:bedrock:${data.aws_region.current.region}:${local.account_id}:inference-profile/*.anthropic.*",
-    ]
-  }
-}
-
 data "aws_iam_policy_document" "secret_read" {
   statement {
     sid    = "ReadSecrets"
@@ -399,7 +359,7 @@ resource "aws_iam_role" "workload" {
   # (flux.tf) into each sync KSA's role-arn annotation, so the names must stay
   # deterministic.
   name        = "${var.name}-${each.key}"
-  description = "Platform workload ${each.value.namespace}/${each.value.service_account} (${var.name})"
+  description = "Workload ${each.value.namespace}/${each.value.service_account} (${var.name})"
 
   # The podless secret readers trust the IRSA OIDC provider; everything with a
   # real pod trusts Pod Identity (see the header comment).

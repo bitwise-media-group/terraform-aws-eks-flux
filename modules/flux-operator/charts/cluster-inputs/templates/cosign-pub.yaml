@@ -12,7 +12,7 @@ metadata:
   name: cosign-pub
   namespace: {{ .Release.Namespace }}
   labels:
-    patchy.internal/input: cosign-pub
+    platform.internal/input: cosign-pub
 type: Opaque
 stringData:
   cosign.pub: {{ .Values.cosignPublicKey | quote }}

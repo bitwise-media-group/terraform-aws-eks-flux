@@ -20,6 +20,6 @@ variable "tags" {
   description = "Tags applied to the role, the consumer policy and every cached repository."
   type        = map(string)
   default = {
-    app = "patchy"
+    app = "platform"
   }
 }

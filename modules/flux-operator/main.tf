@@ -1,28 +1,50 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-# The flux bootstrap chain: three helm releases, so a single terraform apply
-# takes an empty cluster to a reconciling GitOps platform without any
-# kubernetes_manifest plan-time CRD problems - 
+# The flux bootstrap chain: three helm releases plus one per application, so
+# a single terraform apply takes an empty cluster to a reconciling GitOps
+# platform without any kubernetes_manifest plan-time CRD problems -
 #
 #   1. flux-operator     the operator + its CRDs (FluxInstance, ResourceSet, ...)
-#   2. cluster-inputs    the terraform -> flux-manifests contract (local chart):
-#                        the cluster-vars ConfigMap and pre-created namespaces
+#   2. cluster-inputs    the terraform -> platform contract (local chart): the
+#                        cluster-vars ConfigMap, the per-application <key>-vars
+#                        ConfigMaps and pre-created namespaces
 #   3. flux-instance     renders the FluxInstance CR; the operator materialises
-#                        the Flux controllers and the sync OCIRepository from it
+#                        the Flux controllers and the sync OCIRepository (the
+#                        platform entrypoint) from it
+#   4. application-*     one seed per application image (local chart): the
+#                        ResourceSetInputProvider + ResourceSet that resolve,
+#                        verify and apply the image
 #
 # Everything is pulled from the platform registry (charts/flux-operator,
 # charts/flux-instance, mirrored fluxcd controller images), so the artifact
 # store must be populated by flux-containers before the first bootstrap.
 #
-# The operator and instance releases are BOOTSTRAP-ONLY (ignore_changes): the
-# manifests' flux component adopts both by release name and follows the newest
-# mirrored charts from then on, so a flux-containers publish -- never a
-# terraform apply -- is what upgrades flux on a running cluster.
-# cluster_inputs stays terraform-reconciled: cluster-vars changes flow through
+# The operator, instance and application releases are BOOTSTRAP-ONLY
+# (ignore_changes): the platform's flux component adopts the first two by
+# release name and follows the newest mirrored charts from then on, so a
+# flux-containers publish -- never a terraform apply -- is what upgrades flux
+# on a running cluster; each application image ships its own copy of its seed
+# objects and owns them from its first reconcile, so an application release
+# is likewise never a terraform apply. cluster_inputs stays
+# terraform-reconciled: cluster-vars and <key>-vars changes flow through
 # applies.
 
 locals {
+  # How each application image is listed and pulled. Under the platform
+  # prefix the flux controllers reach ECR with their Pod Identity: tags are
+  # listed through the ECR API (an ECRArtifactTag input provider) and the
+  # OCIRepository authenticates as provider aws. Anywhere else (ghcr.io, a
+  # GAR mirror) the generic listing and pull apply, with an optional pull
+  # secret. Keyed on the registry, never on the cloud: a ghcr-hosted image on
+  # an AWS cluster is still a generic pull.
+  applications = {
+    for key, app in var.applications : key => merge(app, {
+      tag_provider = app.platform ? "ECRArtifactTag" : "OCIArtifactTag"
+      oci_provider = app.platform ? "aws" : "generic"
+    })
+  }
+
   # Platform controllers run on the always-on system node group, never on
   # Karpenter's workload capacity. The operator is pinned via chart values; the
   # Flux controllers via a kustomize patch on the generated flux-system
@@ -199,8 +221,9 @@ resource "helm_release" "cluster_inputs" {
   values = [
     yamlencode(merge(
       {
-        clusterVars = var.cluster_vars
-        namespaces  = var.namespaces
+        clusterVars     = var.cluster_vars
+        applicationVars = var.application_vars
+        namespaces      = var.namespaces
       },
       # Keyed verification: the chart renders the public key into the Secret
       # the sync verify patch (and the stack, via SecretSync) reads.
@@ -214,4 +237,58 @@ resource "helm_release" "cluster_inputs" {
   timeout = 120
 
   depends_on = [helm_release.flux_operator]
+}
+
+# One seed per application image. The chart renders the two flux-operator
+# objects that bootstrap an application (a ResourceSetInputProvider resolving
+# the newest tag in range, and a ResourceSet turning it into a verified
+# OCIRepository + Kustomization); the image carries the same two objects and
+# takes them over on its first reconcile, so from then on the application
+# owns itself. No helm.sh/resource-policy: keep -- uninstalling the release
+# IS the removal path (the ResourceSet's finalizer garbage-collects the
+# Kustomization, whose own finalizer prunes the application).
+resource "helm_release" "application" {
+  for_each = local.applications
+
+  name      = "application-${each.key}"
+  namespace = var.namespace
+
+  chart = "${path.module}/charts/application"
+
+  values = [
+    yamlencode({
+      name        = each.key
+      url         = each.value.url
+      semver      = each.value.semver
+      path        = each.value.path
+      interval    = each.value.interval
+      tagProvider = each.value.tag_provider
+      ociProvider = each.value.oci_provider
+      pullSecret  = each.value.pull_secret != null ? each.value.pull_secret : ""
+      timeout     = each.value.timeout
+      prune       = each.value.prune
+      wait        = each.value.wait
+      dependsOn   = sort(tolist(each.value.depends_on))
+      verify = {
+        keyed   = each.value.verify.keyed
+        issuer  = each.value.verify.issuer != null ? each.value.verify.issuer : ""
+        subject = each.value.verify.subject != null ? each.value.verify.subject : ""
+      }
+    })
+  ]
+
+  wait    = true
+  timeout = 120
+
+  # Bootstrap-only, as flux_operator and flux_instance above: the image's own
+  # copy of these objects wins every field from the first reconcile on, and a
+  # terraform re-apply would fight it back. Never lift this.
+  lifecycle {
+    ignore_changes = all
+  }
+
+  # The FluxInstance must exist for the ResourceSet's dependsOn gate, and
+  # cluster-vars (plus the application's own <key>-vars) must be in place for
+  # the Kustomization's first substitution.
+  depends_on = [helm_release.flux_instance, helm_release.cluster_inputs]
 }

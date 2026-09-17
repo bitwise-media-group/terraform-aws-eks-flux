@@ -3,8 +3,10 @@
 
 # Every surface on: a pull-through cache of the central store, the DNS/TLS
 # wiring, reserved Gateway addresses, RBAC access entries, SSO, the staging sync
-# channel, pre-created workload namespaces and extra cluster vars / kustomize
-# patches. This is the shape a real patchy deployment root will take.
+# channel, the electable platform components and one seeded application
+# (patchy) composed the way a real root composes it - the application's own
+# module emits the maps, the cluster module consumes them, and nothing
+# application-specific lives in the cluster module.
 #
 # PREREQUISITES this example does not create (they live upstream):
 #
@@ -37,6 +39,70 @@ module "cache" {
   }
 
   tags = var.tags
+}
+
+# The application, composed beside the cluster. A real root sources this
+# from the application's own repository (patchy-app-manifests//modules/aws),
+# which emits exactly these maps from static root inputs - never from cluster
+# outputs, so there is no cycle:
+#
+#   module "patchy" {
+#     source = "git::https://github.com/bitwise-media-group/patchy-app-manifests.git//modules/aws?ref=v0.1.0"
+#
+#     name              = var.name
+#     platform_registry = module.cache.platform_registry.url
+#     secret_prefix     = var.secret_prefix
+#     domain            = var.dns_zone_name
+#     harnesses         = ["claude"]
+#     claude            = { provider = "anthropic" }
+#     sso_enabled       = var.sso.enabled
+#   }
+#
+# Until that module is published, the same maps are spelled out literally
+# here so the example plans on its own; the values are what the module's
+# outputs carry.
+locals {
+  patchy = {
+    namespaces = ["patchy", "patchy-agents"]
+
+    # patchy's egress-broker only needs cloud credentials on the bedrock
+    # provider; on anthropic (this example) it carries no grant.
+    workload_grants = {}
+
+    # The KSA patchy's secret syncs run as (its GitHub App credential and
+    # the anthropic token land in the patchy namespace).
+    secret_readers = [
+      { namespace = "patchy", service_account = "patchy-secrets" },
+    ]
+
+    application = {
+      url        = "oci://${module.cache.platform_registry.url}/manifests/patchy"
+      semver     = "<1.0.0 >=0.1.0"
+      timeout    = "10m"
+      depends_on = ["kyverno-policies", "gateway", "secret-sync"]
+      verify = {
+        subject = "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+      }
+      dex_clients = var.sso.enabled ? {
+        patchy-status = {
+          name          = "Patchy Status"
+          redirect_uris = ["https://status.${var.dns_zone_name}/oauth2/callback"]
+          readers       = ["patchy/patchy-secrets"]
+        }
+      } : {}
+    }
+
+    vars = {
+      AGENT_HARNESSES                  = "claude"
+      AGENT_EGRESS_POLICY              = "cilium"
+      PATCHY_EVALUATION                = "false"
+      PATCHY_DOMAIN                    = var.dns_zone_name
+      CLAUDE_PROVIDER                  = "anthropic"
+      CLAUDE_ANTHROPIC_AUTH            = "token"
+      PATCHY_MANIFESTS_SEMVER          = "<1.0.0 >=0.1.0"
+      SIGNED_IDENTITY_PATCHY_MANIFESTS = "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+    }
+  }
 }
 
 module "cluster" {
@@ -107,16 +173,25 @@ module "cluster" {
   }
 
   # Per-cluster reusability knobs: distinct Secrets Manager names when clusters
-  # share an account, the optional-tier component election, and the SSO toggle
-  # that deploys dex and wires the elected components to it.
-  secret_prefix    = var.secret_prefix
-  stack_components = var.stack_components
-  sso              = var.sso
+  # share an account, the electable-tier component election (the platform's
+  # flux-web status UI and the GitHub Actions runner controller), and the SSO
+  # toggle that deploys dex and wires every relying party to it.
+  secret_prefix       = var.secret_prefix
+  platform_components = var.platform_components
+  sso                 = var.sso
 
-  # The model provider patchy's egress-broker proxies claude-runner traffic to,
-  # published as the CLAUDE_* cluster vars (bedrock additionally grants the
-  # broker's KSA Bedrock invoke permissions).
-  patchy = var.patchy
+  # The application, wired from its module's outputs: its IAM grants, its
+  # secret-sync readers, the seed that installs it and its own vars.
+  workload_grants = local.patchy.workload_grants
+  workload_identity = {
+    secret_readers = local.patchy.secret_readers
+  }
+  applications = {
+    patchy = local.patchy.application
+  }
+  application_vars = {
+    patchy = local.patchy.vars
+  }
 
   flux = {
     sync = {
@@ -125,9 +200,9 @@ module "cluster" {
       ref = "staging"
     }
 
-    # patchy's namespaces exist from minute zero so its secrets (GitHub App,
-    # webhook secret, Anthropic key) can land before patchy itself deploys.
-    namespaces = ["patchy", "patchy-agents"]
+    # the application's namespaces exist from minute zero so its secrets
+    # (GitHub App, webhook secret, Anthropic token) can land before it deploys
+    namespaces = local.patchy.namespaces
 
     cluster_vars = {
       # pin a component's chart range without a manifests release

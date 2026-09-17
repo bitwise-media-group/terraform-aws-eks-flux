@@ -352,7 +352,7 @@ resource "aws_eks_identity_provider_config" "dex" {
 
   oidc {
     identity_provider_config_name = "dex"
-    issuer_url                    = "https://dex.${local.patchy_domain}"
+    issuer_url                    = "https://dex.${local.platform_domain}"
     client_id                     = var.sso.kubectl.client_id
 
     username_claim  = "email"
