@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT
 
 # The central platform artifact store, applied once in the platform account.
-# Feed its outputs to the publishing repos as the AWS_PUBLISHER_ROLE /
-# PLATFORM_REGISTRY org-level Actions variables, and its registry_id to every
+# Feed its outputs to the publishing repos as the AWS_CHART_PUBLISHER_ROLE /
+# AWS_MANIFEST_PUBLISHER_ROLE (one per manifest-publishing repo) /
+# AWS_PLATFORM_REGISTRY Actions variables, and its registry_id to every
 # consuming account's registry-cache.
 #
 # Reads are org-wide by construction: only the ECR pull-through cache service
@@ -23,9 +24,11 @@ module "store" {
   organization_id = var.organization_id
 
   github = {
-    # manifests_id stays null until the repo exists on GitHub; set it and
-    # re-apply, or the manifest publisher's subject never matches.
-    manifests_id = var.github_manifests_id
+    # One publisher per manifest-publishing repo, scoped to its own paths:
+    # the platform repo keeps manifests/*, each application repo gets exactly
+    # manifests/<app>. A repository_id stays null until the repo exists on
+    # GitHub; set it and re-apply, or that publisher's subject never matches.
+    manifest_publishers = var.manifest_publishers
   }
 
   # Pass an existing provider once a cloud-accounts aws environment owns it - 

@@ -16,7 +16,8 @@ variable "name" {
 variable "repository_prefix" {
   description = <<-EOT
     ECR repository name prefix everything lands beneath: charts at <prefix>/charts/<name>, images at
-    <prefix>/images/<original-path>, and the manifests artifact at <prefix>/flux-manifests. The creation template is
+    <prefix>/images/<original-path>, and the manifest images at <prefix>/manifests/platform (the platform
+    entrypoint), <prefix>/manifests/<component> and <prefix>/manifests/<application>. The creation template is
     keyed on this prefix, so it is also what makes create-on-push work.
   EOT
   type        = string
@@ -80,18 +81,49 @@ variable "github" {
   description = <<-EOT
     GitHub org and repository names the publisher trust is pinned to, plus the immutable numeric ids GitHub embeds in
     the OIDC subjects of post-2026-07-15 repos (org_id from GET /orgs/<org>, repo ids from GET /repos/<org>/<repo>).
-    manifests_id may stay null until that repo exists on GitHub.
+    containers is the chart/image mirror (flux-containers). manifest_publishers is every repo that publishes manifest
+    images, keyed by repo name: the platform's (paths ["manifests/*"], the platform authority) and one per application
+    repo (paths ["manifests/<app>"], so an application can never overwrite the platform). Each gets its own role,
+    trusted from main, release tags and the promotion environment, with push scoped to exactly its paths;
+    repository_id may stay null until that repo exists on GitHub. platform names the key that publishes the
+    platform entrypoint - its workflow identities are what signed_identity_subjects exports for the cluster
+    module.
   EOT
   type = object({
     org           = optional(string, "bitwise-media-group")
     org_id        = optional(number, 282673588)
     containers    = optional(string, "flux-containers")
     containers_id = optional(number, 1303643498)
-    manifests     = optional(string, "flux-manifests")
-    manifests_id  = optional(number)
+    platform      = optional(string, "flux-manifests")
+    manifest_publishers = optional(map(object({
+      repository_id = optional(number)
+      paths         = list(string)
+    })), { flux-manifests = { paths = ["manifests/*"] } })
   })
   nullable = false
   default  = {}
+
+  validation {
+    condition     = contains(keys(var.github.manifest_publishers), var.github.platform)
+    error_message = "github.platform must name a key of github.manifest_publishers - the platform entrypoint's publisher is what the clusters' signed_identity_subjects pin."
+  }
+
+  validation {
+    condition = alltrue([
+      for repo in keys(var.github.manifest_publishers) : can(regex("^[A-Za-z0-9._-]+$", repo))
+    ])
+    error_message = "github.manifest_publishers keys must be GitHub repository names (they also suffix the publisher role names)."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for publisher in values(var.github.manifest_publishers) : concat(
+        [length(publisher.paths) > 0],
+        [for path in publisher.paths : can(regex("^[a-z0-9._-]+(/[a-z0-9._-]+)*(/\\*)?$", path))],
+      )
+    ]))
+    error_message = "Each github.manifest_publishers entry needs at least one path beneath the prefix (e.g. manifests/* or manifests/<app>): path segments of ECR name characters, with at most a trailing /* wildcard."
+  }
 }
 
 variable "promotion_environment" {
@@ -132,7 +164,7 @@ variable "kms_key_arn" {
 variable "signing_kms_key_arn" {
   description = <<-EOT
     Asymmetric SIGN_VERIFY KMS key the publish workflows sign artifacts with (cosign sign --key awskms:///<arn>),
-    instead of keyless Fulcio identities. When set, both publisher roles get kms:Sign / kms:GetPublicKey /
+    instead of keyless Fulcio identities. When set, every publisher role gets kms:Sign / kms:GetPublicKey /
     kms:DescribeKey on the key; feed the same ARN to the cluster module's signed_identity.kms_key_arn so verification
     matches. Null keeps signing keyless (the signed_identity_subjects output). The key itself lives outside this
     module - signing identity should outlive any one store.

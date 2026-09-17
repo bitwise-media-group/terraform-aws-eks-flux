@@ -39,24 +39,41 @@ output "image_repository_prefix" {
   value       = "${local.registry_host}/${var.repository_prefix}/images"
 }
 
-output "manifest_artifact_url" {
-  description = "OCI url of the flux-manifests artifact the clusters sync."
-  value       = "oci://${local.registry_host}/${var.repository_prefix}/flux-manifests"
+output "manifests_prefix" {
+  description = "OCI prefix every manifest image is published under: manifests/platform, manifests/<component> and manifests/<application> beneath it. The AWS_PLATFORM_REGISTRY-derived base the publish workflows push to."
+  value       = "oci://${local.registry_host}/${var.repository_prefix}/manifests"
+}
+
+output "platform_manifests_url" {
+  description = "OCI url of the platform entrypoint image the clusters sync (the cluster module's flux.sync.url default)."
+  value       = "oci://${local.registry_host}/${var.repository_prefix}/manifests/platform"
 }
 
 output "chart_publisher" {
   description = "Chart publisher role (the role-to-assume input of aws-actions/configure-aws-credentials in flux-containers, set as the AWS_CHART_PUBLISHER_ROLE org variable)."
   value = {
-    name = aws_iam_role.publisher["chart"].name
-    arn  = aws_iam_role.publisher["chart"].arn
+    name = aws_iam_role.chart_publisher.name
+    arn  = aws_iam_role.chart_publisher.arn
   }
 }
 
-output "manifest_publisher" {
-  description = "Manifest publisher role (the role-to-assume input of aws-actions/configure-aws-credentials in flux-manifests, set as the AWS_MANIFEST_PUBLISHER_ROLE org variable)."
+output "manifest_publishers" {
+  description = <<-EOT
+    One manifest publisher role per github.manifest_publishers key: the role-to-assume input of
+    aws-actions/configure-aws-credentials in that repo (its AWS_MANIFEST_PUBLISHER_ROLE variable), the paths it may
+    push, and the Fulcio certificate-subject regexps of its publish workflows (release tags and the edge channel) -
+    an application repo's release subject is what the cluster module's applications[*].verify.subject pins.
+  EOT
   value = {
-    name = aws_iam_role.publisher["manifest"].name
-    arn  = aws_iam_role.publisher["manifest"].arn
+    for repo, role in aws_iam_role.manifest_publisher : repo => {
+      name  = role.name
+      arn   = role.arn
+      paths = var.github.manifest_publishers[repo].paths
+      subjects = {
+        release = "^https://github\\.com/${var.github.org}/${repo}/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+        edge    = "^https://github\\.com/${var.github.org}/${repo}/\\.github/workflows/publish-edge\\.yaml@refs/heads/main$"
+      }
+    }
   }
 }
 
@@ -66,13 +83,13 @@ output "oidc_provider_arn" {
 }
 
 output "signed_identity_subjects" {
-  description = "Fulcio certificate-subject regexps for the publishing workflows (keyless mode) - feed these to the cluster module's signed_identity variable. Cloud-agnostic: the signer is GitHub, not the hosting cloud. Irrelevant when signing_kms_key_arn selects KMS signing."
+  description = "Fulcio certificate-subject regexps for the chart mirror and the platform manifests publisher (keyless mode) - feed these to the cluster module's signed_identity variable. Cloud-agnostic: the signer is GitHub, not the hosting cloud. Irrelevant when signing_kms_key_arn selects KMS signing. Application publishers' subjects ride in manifest_publishers."
   value = {
     containers = "^https://github\\.com/${var.github.org}/${var.github.containers}/\\.github/workflows/publish\\.yaml@refs/heads/main$"
-    manifests  = "^https://github\\.com/${var.github.org}/${var.github.manifests}/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+    manifests  = "^https://github\\.com/${var.github.org}/${var.github.platform}/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
     # edge channel: dev/sandbox clusters tracking trunk pass this as
     # signed_identity.manifests_subject instead of the release identity above
-    manifests_edge = "^https://github\\.com/${var.github.org}/${var.github.manifests}/\\.github/workflows/publish-edge\\.yaml@refs/heads/main$"
+    manifests_edge = "^https://github\\.com/${var.github.org}/${var.github.platform}/\\.github/workflows/publish-edge\\.yaml@refs/heads/main$"
   }
 }
 

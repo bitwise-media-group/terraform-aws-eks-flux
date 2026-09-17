@@ -3,9 +3,12 @@
 
 # Who may push, and who may pull.
 #
-# PUSH: the two GitHub Actions publishers, through the account's GitHub OIDC
-# provider. These are the only long-lived identities the platform has - every
-# in-cluster workload uses EKS Pod Identity instead.
+# PUSH: the GitHub Actions publishers, through the account's GitHub OIDC
+# provider - the chart publisher (flux-containers) and one manifest publisher
+# per manifest-publishing repo (the platform's, and each application's), each
+# scoped to its own paths beneath the prefix. These are the only long-lived
+# identities the platform has - every in-cluster workload uses EKS Pod
+# Identity instead.
 #
 # PULL: nothing by default except the ECR pull-through cache service, and that
 # ORG-WIDE rather than per-account, so a new cluster account onboards without
@@ -15,21 +18,23 @@
 
 locals {
   # GitHub mints immutable subjects for repos created (or renamed/transferred)
-  # after 2026-07-15: repo:<org>@<org id>/<repo>@<repo id>:<context>. Both
-  # publishing repos are post-cutoff, so the subject conditions must pin the
+  # after 2026-07-15: repo:<org>@<org id>/<repo>@<repo id>:<context>. Every
+  # publishing repo is post-cutoff, so the subject conditions must pin the
   # numeric ids - the name-only form never matches and AssumeRoleWithWebIdentity
   # fails.
   containers_subject_repo = "${var.github.org}@${var.github.org_id}/${var.github.containers}@${var.github.containers_id}"
 
-  # flux-manifests may not exist on GitHub yet when the store is first applied.
-  # Until manifests_id is set, its subject falls back to the name-only form - 
-  # which a post-cutoff repo will never present - so set the id and re-apply as
-  # soon as the repo is created.
-  manifests_subject_repo = (
-    var.github.manifests_id != null
-    ? "${var.github.org}@${var.github.org_id}/${var.github.manifests}@${var.github.manifests_id}"
-    : "${var.github.org}/${var.github.manifests}"
-  )
+  # A manifest-publishing repo may not exist on GitHub yet when the store is
+  # first applied. Until its repository_id is set, the subject falls back to
+  # the name-only form - which a post-cutoff repo will never present - so set
+  # the id and re-apply as soon as the repo is created.
+  manifest_subject_repos = {
+    for repo, publisher in var.github.manifest_publishers : repo => (
+      publisher.repository_id != null
+      ? "${var.github.org}@${var.github.org_id}/${repo}@${publisher.repository_id}"
+      : "${var.github.org}/${repo}"
+    )
+  }
 
   oidc_provider_arn = coalesce(
     var.oidc_provider_arn,
@@ -40,14 +45,35 @@ locals {
   # default branch only - PR validation never gets push credentials.
   chart_publisher_subjects = ["repo:${local.containers_subject_repo}:ref:refs/heads/main"]
 
-  # Release tags publish versioned artifacts and move `staging`; merges to main
+  # Every manifest publisher is trusted from the same three contexts: release
+  # tags publish versioned artifacts and move `staging`; merges to main
   # publish the `edge` channel; the protected promotion environment moves
   # `stable`.
-  manifest_publisher_subjects = [
-    "repo:${local.manifests_subject_repo}:ref:refs/heads/main",
-    "repo:${local.manifests_subject_repo}:ref:refs/tags/v*",
-    "repo:${local.manifests_subject_repo}:environment:${var.promotion_environment}",
-  ]
+  manifest_publisher_subjects = {
+    for repo, subject_repo in local.manifest_subject_repos : repo => [
+      "repo:${subject_repo}:ref:refs/heads/main",
+      "repo:${subject_repo}:ref:refs/tags/v*",
+      "repo:${subject_repo}:environment:${var.promotion_environment}",
+    ]
+  }
+
+  # Every trust, keyed as the roles are: "chart" plus one key per manifest
+  # publisher.
+  publisher_subjects = merge(
+    { chart = local.chart_publisher_subjects },
+    local.manifest_publisher_subjects,
+  )
+
+  # What each publisher may push, as repository ARN patterns beneath the
+  # prefix. The chart publisher owns the mirror namespaces; each manifest
+  # publisher owns exactly the paths it declares - the platform's own repo
+  # keeps the wide manifests/* because it is the platform authority, an
+  # application repo gets manifests/<app> alone, so it can never overwrite
+  # the platform (or another application).
+  publisher_paths = merge(
+    { chart = ["charts/*", "images/*", "artifacts/*"] },
+    { for repo, publisher in var.github.manifest_publishers : repo => publisher.paths },
+  )
 }
 
 # Created here only when the account has no GitHub OIDC provider yet; pass
@@ -64,10 +90,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 data "aws_iam_policy_document" "publisher_assume_role" {
-  for_each = {
-    chart    = local.chart_publisher_subjects
-    manifest = local.manifest_publisher_subjects
-  }
+  for_each = local.publisher_subjects
 
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -95,6 +118,8 @@ data "aws_iam_policy_document" "publisher_assume_role" {
 }
 
 data "aws_iam_policy_document" "publisher" {
+  for_each = local.publisher_paths
+
   statement {
     sid       = "Authorize"
     effect    = "Allow"
@@ -104,8 +129,9 @@ data "aws_iam_policy_document" "publisher" {
 
   # CreateRepository is what makes the creation template fire: a publisher
   # pushing <prefix>/charts/kyverno for the first time creates that repository
-  # with the template's settings. Scoped to the prefix, so a publisher cannot
-  # create repositories anywhere else in the registry.
+  # with the template's settings. Scoped to the publisher's own paths beneath
+  # the prefix, so a publisher cannot create or overwrite repositories
+  # anywhere else in the registry.
   statement {
     sid    = "PushAndCreate"
     effect = "Allow"
@@ -125,7 +151,10 @@ data "aws_iam_policy_document" "publisher" {
       "ecr:TagResource",
     ]
 
-    resources = [local.repository_arn_pattern]
+    resources = [
+      for path in each.value :
+      "arn:${local.partition}:ecr:${local.region}:${local.account_id}:repository/${var.repository_prefix}/${path}"
+    ]
   }
 
   # KMS signing mode: cosign signs with awskms:///<key> from the publish
@@ -149,30 +178,70 @@ data "aws_iam_policy_document" "publisher" {
   }
 }
 
-# Both publishers hold push on the whole platform prefix - per-namespace push
-# separation has no ECR equivalent. The effective control is consumer-side
-# verification: every OCIRepository and the Kyverno policy pin the exact signer
-# workflow identity, so a compromised chart publisher pushing a fake manifests
-# artifact still fails verification on the cluster.
-resource "aws_iam_role" "publisher" {
-  for_each = {
-    chart    = var.github.containers
-    manifest = var.github.manifests
-  }
+# Push separation is per path: every publisher pushes only beneath the paths
+# it is granted, so a compromised application publisher cannot replace the
+# platform entrypoint. Content security is still consumer-side verification -
+# every OCIRepository and the Kyverno policy pin the exact signer workflow
+# identity, so a fake artifact from any publisher fails verification on the
+# cluster.
+resource "aws_iam_role" "chart_publisher" {
+  name               = "${var.name}-chart-publisher"
+  description        = "Pushes charts and images to ${var.repository_prefix}/* from ${var.github.org}/${var.github.containers} via GitHub OIDC"
+  assume_role_policy = data.aws_iam_policy_document.publisher_assume_role["chart"].json
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy" "chart_publisher" {
+  name   = "publish"
+  role   = aws_iam_role.chart_publisher.id
+  policy = data.aws_iam_policy_document.publisher["chart"].json
+}
+
+# One role per manifest-publishing repo (the platform's, and each
+# application's), each the role-to-assume of its repo's publish workflows.
+resource "aws_iam_role" "manifest_publisher" {
+  for_each = var.github.manifest_publishers
 
   name               = "${var.name}-${each.key}-publisher"
-  description        = "Pushes to ${var.repository_prefix}/* from ${var.github.org}/${each.value} via GitHub OIDC"
+  description        = "Pushes ${join(", ", [for path in each.value.paths : "${var.repository_prefix}/${path}"])} from ${var.github.org}/${each.key} via GitHub OIDC"
   assume_role_policy = data.aws_iam_policy_document.publisher_assume_role[each.key].json
 
   tags = var.tags
 }
 
-resource "aws_iam_role_policy" "publisher" {
-  for_each = aws_iam_role.publisher
+resource "aws_iam_role_policy" "manifest_publisher" {
+  for_each = aws_iam_role.manifest_publisher
 
   name   = "publish"
   role   = each.value.id
-  policy = data.aws_iam_policy_document.publisher.json
+  policy = data.aws_iam_policy_document.publisher[each.key].json
+}
+
+# 3.x addressed the two publishers as aws_iam_role.publisher["chart"] and
+# aws_iam_role.publisher["manifest"]; the platform publisher now lives under
+# its repo name. The chart publisher keeps its name; the platform publisher's
+# name changes (platform-manifest-publisher -> platform-<repo>-publisher), so
+# it is replaced on the first apply - update the repo's
+# AWS_MANIFEST_PUBLISHER_ROLE variable from the manifest_publishers output.
+moved {
+  from = aws_iam_role.publisher["chart"]
+  to   = aws_iam_role.chart_publisher
+}
+
+moved {
+  from = aws_iam_role_policy.publisher["chart"]
+  to   = aws_iam_role_policy.chart_publisher
+}
+
+moved {
+  from = aws_iam_role.publisher["manifest"]
+  to   = aws_iam_role.manifest_publisher["flux-manifests"]
+}
+
+moved {
+  from = aws_iam_role_policy.publisher["manifest"]
+  to   = aws_iam_role_policy.manifest_publisher["flux-manifests"]
 }
 
 # ---------------------------------------------------------------------------

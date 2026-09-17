@@ -6,7 +6,9 @@
 #
 #   <prefix>/charts/<name>            helm charts mirrored by flux-containers
 #   <prefix>/images/<original-path>   digest-pinned images mirrored by flux-containers
-#   <prefix>/flux-manifests           the signed OCI manifests artifact synced by FluxInstance
+#   <prefix>/manifests/platform       the platform entrypoint image the FluxInstance syncs
+#   <prefix>/manifests/<component>    one signed image per platform component
+#   <prefix>/manifests/<application>  one signed image per application (its own repo publishes it)
 #
 # ECR has no arbitrary-path model: every one of those is a real repository that
 # must exist before a push. A REPOSITORY CREATION TEMPLATE with CREATE_ON_PUSH
@@ -108,14 +110,14 @@ resource "aws_iam_role_policy" "creation" {
 
 resource "aws_ecr_repository_creation_template" "platform" {
   prefix      = var.repository_prefix
-  description = "Platform artifact store: mirrored charts + images and the signed flux-manifests artifact"
+  description = "Platform artifact store: mirrored charts + images and the signed platform, component and application manifest images"
 
   # Publishers push straight to <prefix>/<path> and the repository appears.
   applied_for = ["CREATE_ON_PUSH"]
 
   custom_role_arn = aws_iam_role.creation.arn
 
-  # Channel tags (staging/stable) on the manifests artifact must move between
+  # Channel tags (staging/stable) on the manifest images must move between
   # releases, and tag immutability is per repository, so it stays off. Version
   # tags are protected from reuse by the publish workflows refusing to
   # overwrite an existing digest, not by the registry.

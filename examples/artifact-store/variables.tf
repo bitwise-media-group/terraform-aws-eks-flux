@@ -12,10 +12,16 @@ variable "organization_id" {
   type        = string
 }
 
-variable "github_manifests_id" {
-  description = "Numeric repository id of flux-manifests (GET /repos/<org>/flux-manifests). Null until the repo exists; the manifest publisher's OIDC subject cannot match without it."
-  type        = number
-  default     = null
+variable "manifest_publishers" {
+  description = "Manifest-publishing repos, keyed by name: the paths each may push beneath the prefix and its numeric repository id (GET /repos/<org>/<repo>; null until the repo exists, and its OIDC subject cannot match without it)."
+  type = map(object({
+    repository_id = optional(number)
+    paths         = list(string)
+  }))
+  default = {
+    flux-manifests       = { paths = ["manifests/*"] }
+    patchy-app-manifests = { paths = ["manifests/patchy"] }
+  }
 }
 
 variable "oidc_provider_arn" {
@@ -28,6 +34,6 @@ variable "tags" {
   description = "Tags applied to the roles and to every repository the creation template makes."
   type        = map(string)
   default = {
-    app = "patchy"
+    app = "platform"
   }
 }

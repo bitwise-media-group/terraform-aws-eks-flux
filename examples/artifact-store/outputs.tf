@@ -12,11 +12,16 @@ output "registry_id" {
 }
 
 output "publishers" {
-  description = "Role ARNs for aws-actions/configure-aws-credentials in the publishing repos."
+  description = "Role ARNs for aws-actions/configure-aws-credentials in the publishing repos: the chart publisher, and one manifest publisher per repo."
   value = {
-    chart    = module.store.chart_publisher.arn
-    manifest = module.store.manifest_publisher.arn
+    chart     = module.store.chart_publisher.arn
+    manifests = { for repo, publisher in module.store.manifest_publishers : repo => publisher.arn }
   }
+}
+
+output "manifests_prefix" {
+  description = "The OCI prefix every manifest-publishing repo pushes beneath (its AWS_PLATFORM_REGISTRY variable is the registry half of it)."
+  value       = module.store.manifests_prefix
 }
 
 output "signed_identity_subjects" {

@@ -39,7 +39,9 @@ variables {
   organization_id = "o-abcdefghij"
 
   github = {
-    manifests_id = 987654321
+    manifest_publishers = {
+      flux-manifests = { repository_id = 987654321, paths = ["manifests/*"] }
+    }
   }
 }
 
@@ -147,15 +149,15 @@ run "publisher_trust_pins_numeric_ids" {
   }
 
   assert {
-    condition     = local.manifests_subject_repo == "bitwise-media-group@282673588/flux-manifests@987654321"
-    error_message = "the manifest publisher's subject must pin the numeric ids once manifests_id is known"
+    condition     = local.manifest_subject_repos["flux-manifests"] == "bitwise-media-group@282673588/flux-manifests@987654321"
+    error_message = "a manifest publisher's subject must pin the numeric ids once repository_id is known"
   }
 
   # main publishes edge, tags publish releases and move staging, the protected
   # environment moves stable.
   assert {
-    condition     = length(local.manifest_publisher_subjects) == 3
-    error_message = "the manifest publisher is trusted from exactly three contexts: main, release tags and the promotion environment"
+    condition     = length(local.manifest_publisher_subjects["flux-manifests"]) == 3
+    error_message = "a manifest publisher is trusted from exactly three contexts: main, release tags and the promotion environment"
   }
 
   assert {
@@ -164,20 +166,106 @@ run "publisher_trust_pins_numeric_ids" {
   }
 }
 
-run "manifests_id_may_lag" {
+run "repository_id_may_lag" {
   command = plan
 
   variables {
     github = {
-      manifests_id = null
+      manifest_publishers = {
+        flux-manifests = { paths = ["manifests/*"] }
+      }
     }
   }
 
   # The repo may not exist on GitHub when the store is first applied.
   assert {
-    condition     = local.manifests_subject_repo == "bitwise-media-group/flux-manifests"
-    error_message = "without manifests_id the subject falls back to the name-only form (which a post-cutoff repo never presents - set the id and re-apply)"
+    condition     = local.manifest_subject_repos["flux-manifests"] == "bitwise-media-group/flux-manifests"
+    error_message = "without repository_id the subject falls back to the name-only form (which a post-cutoff repo never presents - set the id and re-apply)"
   }
+}
+
+run "one_role_per_manifest_publisher" {
+  command = plan
+
+  variables {
+    github = {
+      manifest_publishers = {
+        flux-manifests       = { repository_id = 987654321, paths = ["manifests/*"] }
+        patchy-app-manifests = { paths = ["manifests/patchy"] }
+      }
+    }
+  }
+
+  assert {
+    condition     = length(aws_iam_role.manifest_publisher) == 2 && length(aws_iam_role_policy.manifest_publisher) == 2
+    error_message = "every manifest_publishers key must get its own role and policy"
+  }
+
+  assert {
+    condition     = aws_iam_role.manifest_publisher["patchy-app-manifests"].name == "platform-patchy-app-manifests-publisher"
+    error_message = "manifest publisher roles are named <name>-<repo>-publisher"
+  }
+
+  # The platform repo keeps the wide manifests/* because it is the platform
+  # authority; an application repo gets exactly its own path, so it can never
+  # overwrite the platform entrypoint or another application.
+  assert {
+    condition = (
+      one([for statement in data.aws_iam_policy_document.publisher["patchy-app-manifests"].statement : statement if statement.sid == "PushAndCreate"]).resources
+      == toset(["arn:aws:ecr:eu-west-2:123456789012:repository/platform/manifests/patchy"])
+    )
+    error_message = "an application publisher's push must be scoped to exactly its declared paths"
+  }
+
+  assert {
+    condition = contains(
+      one([for statement in data.aws_iam_policy_document.publisher["flux-manifests"].statement : statement if statement.sid == "PushAndCreate"]).resources,
+      "arn:aws:ecr:eu-west-2:123456789012:repository/platform/manifests/*",
+    )
+    error_message = "the platform publisher's push must cover the whole manifests namespace"
+  }
+
+  assert {
+    condition = (
+      one([for statement in data.aws_iam_policy_document.publisher["chart"].statement : statement if statement.sid == "PushAndCreate"]).resources
+      == toset([
+        "arn:aws:ecr:eu-west-2:123456789012:repository/platform/charts/*",
+        "arn:aws:ecr:eu-west-2:123456789012:repository/platform/images/*",
+        "arn:aws:ecr:eu-west-2:123456789012:repository/platform/artifacts/*",
+      ])
+    )
+    error_message = "the chart publisher's push must be scoped to the mirror namespaces, never manifests/*"
+  }
+
+  assert {
+    condition     = output.manifest_publishers["patchy-app-manifests"].subjects.release == "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+    error_message = "each publisher's release subject must be exported for the cluster module's applications[*].verify.subject"
+  }
+
+  assert {
+    condition     = output.signed_identity_subjects.manifests == "^https://github\\.com/bitwise-media-group/flux-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+    error_message = "signed_identity_subjects.manifests must follow the platform publisher (github.platform), not any application"
+  }
+
+  assert {
+    condition     = output.platform_manifests_url == "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/platform"
+    error_message = "the platform entrypoint url is <registry>/<prefix>/manifests/platform"
+  }
+}
+
+run "platform_publisher_must_be_declared" {
+  command = plan
+
+  variables {
+    github = {
+      platform = "platform-manifests"
+      manifest_publishers = {
+        flux-manifests = { paths = ["manifests/*"] }
+      }
+    }
+  }
+
+  expect_failures = [var.github]
 }
 
 run "registry_output_is_not_a_cache" {
@@ -202,11 +290,13 @@ run "kms_signing_grants_publishers" {
   }
 
   assert {
-    condition = anytrue([
-      for statement in data.aws_iam_policy_document.publisher.statement :
-      statement.sid == "CosignSign" && contains(statement.actions, "kms:Sign")
+    condition = alltrue([
+      for publisher in values(data.aws_iam_policy_document.publisher) : anytrue([
+        for statement in publisher.statement :
+        statement.sid == "CosignSign" && contains(statement.actions, "kms:Sign")
+      ])
     ])
-    error_message = "KMS signing mode must grant the publishers kms:Sign on the signing key"
+    error_message = "KMS signing mode must grant every publisher kms:Sign on the signing key"
   }
 
   assert {
@@ -219,10 +309,11 @@ run "keyless_signing_grants_no_kms" {
   command = plan
 
   assert {
-    condition = !anytrue([
-      for statement in data.aws_iam_policy_document.publisher.statement :
-      statement.sid == "CosignSign"
-    ])
+    condition = !anytrue(flatten([
+      for publisher in values(data.aws_iam_policy_document.publisher) : [
+        for statement in publisher.statement : statement.sid == "CosignSign"
+      ]
+    ]))
     error_message = "keyless mode must grant the publishers no KMS access"
   }
 }
