@@ -1,7 +1,8 @@
 # Repo-local copy of the toolchain house default (.mise/.prettierignore) plus
 # the terraform-docs surface: prettier reflows the generated BEGIN_TF_DOCS
 # blocks, which `terraform-docs --output-check` then flags as stale — the two
-# generators cannot both own those files. markdownlint still lints them.
+# generators cannot both own those files (.markdownlint-cli2.yaml ignores the
+# same set).
 README.md
 modules/*/README.md
 

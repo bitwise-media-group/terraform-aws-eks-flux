@@ -340,8 +340,8 @@ re-pointing the sync through `FLUX_SYNC_URL`, removing the old tier) is document
 
 ## Development
 
-`make help` lists tasks (`fmt`, `lint`, `validate`, `test`, `docs`, `pr`). The toolchain submodule (`.mise/`) pins every
-tool; `git submodule update --init` and `mise trust --all` once per clone.
+`make help` lists tasks (`fmt`, `lint`, `test`, `docs`, `pr`). The toolchain submodule (`.mise/`) pins every tool;
+`git submodule update --init` and `mise trust --all` once per clone.
 
 Everything in `make lint` / `make test` runs against mocked providers, so no credentials are needed to develop here.
 Applying a cluster additionally needs the **AWS CLI** on the machine running terraform - the helm provider's exec plugin
