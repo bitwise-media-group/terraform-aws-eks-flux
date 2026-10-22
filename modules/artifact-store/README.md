@@ -26,6 +26,7 @@ Before 4.0 the store knew a single manifests publisher (`github.manifests_id`) p
 the platform publisher's role is renamed on upgrade (`<name>-manifest-publisher` becomes `<name>-<repo>-publisher`), so
 update the platform repo's `AWS_MANIFEST_PUBLISHER_ROLE` from the new output after applying.
 
+<!-- --8<-- [start:tf-docs] -->
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -104,3 +105,4 @@ No modules.
 | signed\_identity\_subjects | Fulcio certificate-subject regexps for the chart mirror and the platform manifests publisher (keyless mode) - feed these to the cluster module's signed\_identity variable. Cloud-agnostic: the signer is GitHub, not the hosting cloud. Irrelevant when signing\_kms\_key\_arn selects KMS signing. Application publishers' subjects ride in manifest\_publishers. |
 | signing\_kms\_key\_arn | The KMS signing key the publishers sign with (null in keyless mode) - feed it to the cluster module's signed\_identity.kms\_key\_arn so verification matches. |
 <!-- END_TF_DOCS -->
+<!-- --8<-- [end:tf-docs] -->

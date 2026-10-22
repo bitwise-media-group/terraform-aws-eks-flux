@@ -7,6 +7,9 @@
 # release + vX.Y.Z tag. There is no .goreleaser.yaml here — the deliverable IS
 # the tag: consumers reference the module as
 # git::https://github.com/bitwise-media-group/terraform-aws-eks-flux.git?ref=vX.Y.Z
+# Because a zensical.toml lives at the repo root, the docs job then rebuilds
+# the documentation site from the tag and publishes it to GitHub Pages (needs
+# Settings → Pages → Source → GitHub Actions).
 #
 # app-client-id/app-private-key author the release-please PR as the "FF Merge"
 # App instead of the GITHUB_TOKEN. A GITHUB_TOKEN-authored push fires no
@@ -29,10 +32,10 @@ permissions: {}
 jobs:
     release:
         uses: bitwise-media-group/github-workflows/.github/workflows/release.yaml@8b34c6fe87a61fc2f800876e9268bc1da8635e88 # v8.0.0
-        # ceiling for the reusable workflow's release-please job. GitHub resolves
-        # a reusable workflow's permissions as the union of every job and ignores
-        # `if:`, so the caller grants the goreleaser/docs jobs' ceilings even
-        # though both are skipped here (no .goreleaser.yaml, no zensical.toml).
+        # ceiling for the reusable workflow's release-please and docs jobs. GitHub
+        # resolves a reusable workflow's permissions as the union of every job and
+        # ignores `if:`, so the caller also grants the goreleaser job's ceiling
+        # even though it is skipped here (no .goreleaser.yaml).
         permissions:
             # create the release/tag and upload assets
             contents: write
@@ -40,7 +43,8 @@ jobs:
             issues: write
             # release-please opens the release pull request
             pull-requests: write
-            # cosign keyless signing (goreleaser; skipped in this repo)
+            # the docs job's Pages OIDC deploy (and cosign keyless signing for
+            # goreleaser, skipped in this repo)
             id-token: write
             # push container images to ghcr (goreleaser; skipped in this repo)
             packages: write
@@ -48,7 +52,7 @@ jobs:
             attestations: write
             # artifact storage record for the attestation (skipped in this repo)
             artifact-metadata: write
-            # granted for parity with the reusable workflow's docs job ceiling
+            # publish the docs site to GitHub Pages (docs job, gated on zensical.toml)
             pages: write
         with:
             # author the release PR as the FF Merge App so it can auto-merge (a

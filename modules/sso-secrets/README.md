@@ -51,6 +51,7 @@ module "sso_secrets" {
 }
 ```
 
+<!-- --8<-- [start:tf-docs] -->
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -89,3 +90,4 @@ No modules.
 | ---- | ----------- |
 | secrets | The created secrets, keyed by unprefixed name: the ARN and the (prefixed) Secrets Manager name, for wiring further<br/>IAM in the caller (e.g. a maintainer's PutSecretValue rotation grant). Every secret's versions are added out of<br/>band: aws secretsmanager put-secret-value --secret-id <name>. |
 <!-- END_TF_DOCS -->
+<!-- --8<-- [end:tf-docs] -->

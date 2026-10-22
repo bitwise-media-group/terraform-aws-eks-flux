@@ -9,7 +9,11 @@
 #     lint does) plus the examples/* validate + tflint pass and the
 #     terraform-docs --output-check;
 #   - test: a fan-out over every configuration with a plan-time test suite,
-#     run by the ci/pr rollups.
+#     run by the ci/pr rollups;
+#   - build: the Zensical documentation site (zensical.toml + docs/), so CI
+#     renders every page - and every terraform-docs block and example the
+#     pages embed - on each pull request. sync/docs-build/serve mirror the
+#     toolchain go archetype's ready-made docs tasks.
 # Task merging is whole-task replacement, so each redefinition repeats the
 # archetype's rollup and appends this repo's steps.
 
@@ -86,10 +90,35 @@ done
 [ -z "$failed" ]
 """
 
+# Zensical documentation site (Python via uv). `uv sync` provisions Python +
+# zensical from pyproject.toml/uv.lock; the built site/ is git-ignored. The
+# release workflow's docs job rebuilds it from the tag (keyed on zensical.toml)
+# and publishes it to GitHub Pages.
+[sync]
+hide = true
+dir = "{{config_root}}"
+run = "uv sync"
+
+[docs-build]
+description = "build the documentation site (zensical)"
+dir = "{{config_root}}"
+depends = ["sync"]
+run = "uv run zensical build"
+
+[serve]
+description = "serve the docs site locally (zensical)"
+dir = "{{config_root}}"
+depends = ["sync"]
+run = "uv run zensical serve"
+
+[build]
+description = "build the documentation site (zensical)"
+run = [{ task = "docs-build" }]
+
 [ci]
 description = "the checks the reusable CI workflow runs"
-run = [{ task = "lint" }, { task = "docs" }, { task = "test" }]
+run = [{ task = "lint" }, { task = "docs" }, { task = "test" }, { task = "build" }]
 
 [pr]
 description = "full local gate before a pull request"
-run = [{ task = "fmt" }, { task = "lint" }, { task = "docs" }, { task = "test" }]
+run = [{ task = "fmt" }, { task = "lint" }, { task = "docs" }, { task = "test" }, { task = "build" }]

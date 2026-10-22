@@ -17,6 +17,7 @@ There is no automatic rotation - KMS cannot rotate asymmetric keys, and rotating
 (new key, re-sign, re-point verifiers), not a background task. Accordingly the deletion window defaults to the KMS
 maximum, since deleting the key permanently breaks verification of everything it ever signed.
 
+<!-- --8<-- [start:tf-docs] -->
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -70,3 +71,4 @@ No modules.
 | key\_id | The signing key id. |
 | public\_key\_pem | PEM-encoded public half of the signing key, for offline verification (cosign verify --key cosign.pub) or committing next to the artifacts it verifies. Not secret. |
 <!-- END_TF_DOCS -->
+<!-- --8<-- [end:tf-docs] -->

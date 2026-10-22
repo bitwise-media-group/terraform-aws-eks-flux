@@ -8,6 +8,7 @@ Its `platform_registry` output feeds straight into the cluster module and carrie
 is what grants the cluster's pullers the `ecr:CreateRepository` + `ecr:BatchImportUpstreamImage` permissions a cache
 needs - repositories here are materialised on their **first** pull.
 
+<!-- --8<-- [start:tf-docs] -->
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -64,3 +65,4 @@ No modules.
 | repository\_prefix | Local repository prefix the cached artifacts appear under. |
 | upstream\_registry\_url | The store registry this cache fills from. |
 <!-- END_TF_DOCS -->
+<!-- --8<-- [end:tf-docs] -->

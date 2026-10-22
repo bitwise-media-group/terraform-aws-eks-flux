@@ -6,6 +6,10 @@ Cilium, the Flux Operator and one `FluxInstance`, elects which platform componen
 the **applications** the cluster runs - each an independently published manifest image that owns itself after its
 first reconcile. Nothing application-specific lives here.
 
+Full documentation - how each module works, the bootstrap order, the terraform ↔ flux contract and every module's
+generated reference - lives at <https://oss.bitwisemedia.uk/terraform-aws-eks-flux/>, built from `docs/` in this repo
+(`make serve` previews it locally).
+
 Four kinds of repo make a deployment:
 
 | repo                              | role                                                                                   |
@@ -340,8 +344,13 @@ re-pointing the sync through `FLUX_SYNC_URL`, removing the old tier) is document
 
 ## Development
 
-`make help` lists tasks (`fmt`, `lint`, `test`, `docs`, `pr`). The toolchain submodule (`.mise/`) pins every tool;
-`git submodule update --init` and `mise trust --all` once per clone.
+`make help` lists tasks (`fmt`, `lint`, `test`, `docs`, `build`, `serve`, `pr`). The toolchain submodule (`.mise/`)
+pins every tool; `git submodule update --init` and `mise trust --all` once per clone.
+
+The documentation site is [Zensical] (`zensical.toml`, `docs/`, `overrides/`, via uv from `pyproject.toml`/`uv.lock`):
+`make build` renders it into `site/` (CI runs this on every pull request) and `make serve` previews it. Its module
+reference pages embed the terraform-docs block below (and each `modules/*/README.md`'s) through the `tf-docs` snippet
+markers around it, so keep those two comment lines in place.
 
 Everything in `make lint` / `make test` runs against mocked providers, so no credentials are needed to develop here.
 Applying a cluster additionally needs the **AWS CLI** on the machine running terraform - the helm provider's exec plugin
@@ -351,7 +360,9 @@ shells out to `aws eks get-token` (see the caveat above).
 [patchy-app-manifests]: https://github.com/bitwise-media-group/patchy-app-manifests
 [flux-containers]: https://github.com/bitwise-media-group/flux-containers
 [flux-manifests]: https://github.com/bitwise-media-group/flux-manifests
+[Zensical]: https://zensical.org/
 
+<!-- --8<-- [start:tf-docs] -->
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -514,3 +525,4 @@ shells out to `aws eks get-token` (see the caveat above).
 | system\_node\_group | The system node group's actual name and ARN (the name carries a generated suffix). |
 | workload\_roles | Every workload IAM role this module mints, keyed as in iam.tf: the platform grants, each workload\_grants entry<br/>(by its key) and the secrets-<ns>-<sa> readers. Role ARNs, for roots that grant these identities further<br/>access (a bucket policy, a cross-account trust). |
 <!-- END_TF_DOCS -->
+<!-- --8<-- [end:tf-docs] -->

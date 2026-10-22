@@ -38,6 +38,7 @@ module "workers" {
 }
 ```
 
+<!-- --8<-- [start:tf-docs] -->
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -95,3 +96,4 @@ No modules.
 | security\_group\_ids | Security groups the launch template attaches to the nodes (the cluster security group plus any extras). |
 | taints | Kubernetes taints every node in the group carries. |
 <!-- END_TF_DOCS -->
+<!-- --8<-- [end:tf-docs] -->

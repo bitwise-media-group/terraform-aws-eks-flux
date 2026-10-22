@@ -1,3 +1,5 @@
 .terraform.lock.hcl
 **/.terraform.lock.hcl
 **/.terraform/**
+site/**
+.cache/**

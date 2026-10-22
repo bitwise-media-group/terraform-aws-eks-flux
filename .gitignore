@@ -19,3 +19,8 @@ plan.tfplan
 # claude code
 /.claude/**
 !/.claude/settings.json
+
+# docs site (zensical via uv): build output, cache, virtualenv
+/site/
+/.cache/
+/.venv/

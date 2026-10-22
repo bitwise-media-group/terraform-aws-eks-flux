@@ -20,6 +20,7 @@ registry, never the cloud, picks how an image is listed and pulled - `ECRArtifac
 platform prefix (the controllers' Pod Identity), `OCIArtifactTag` / `provider: generic` with an optional pull secret
 anywhere else.
 
+<!-- --8<-- [start:tf-docs] -->
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -83,3 +84,4 @@ No modules.
 | namespace | Namespace the flux-operator and Flux controllers run in. |
 | registry\_reader\_roles | IAM role ARNs the flux controllers assume through Pod Identity - the identities that read the platform registry. |
 <!-- END_TF_DOCS -->
+<!-- --8<-- [end:tf-docs] -->
