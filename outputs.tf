@@ -147,6 +147,26 @@ output "flux" {
   }
 }
 
+output "application_target" {
+  description = <<-EOT
+    Everything modules/application needs to publish an application to this cluster from a root of its own: the
+    cluster name, the flux namespace, the platform registry url, the per-cloud tree (flux.sync.path), the keyless
+    signing issuer (null in KMS mode), whether the cluster is KMS-keyed, the IRSA OIDC provider ARN and issuer host
+    the secret-sync reader roles trust, and the SECRET_PREFIX. Pass it to the module's cluster input verbatim.
+  EOT
+  value = {
+    name              = aws_eks_cluster.main.name
+    namespace         = module.flux_operator.namespace
+    platform_registry = var.platform_registry.url
+    tree              = var.flux.sync.path
+    issuer            = local.signing_kms ? null : var.signed_identity.issuer
+    keyed             = local.signing_kms
+    oidc_provider_arn = aws_iam_openid_connect_provider.irsa.arn
+    oidc_issuer       = local.oidc_issuer_host
+    secret_prefix     = local.secret_prefix
+  }
+}
+
 output "secret_prefix" {
   description = <<-EOT
     The normalized Secrets Manager name prefix (var.secret_prefix, or the empty string), published as SECRET_PREFIX.
@@ -185,9 +205,9 @@ output "registry_reader_principals" {
 
 output "sso" {
   description = <<-EOT
-    SSO facts this cluster owns (null unless sso.enabled): the dex issuer, every registered client (platform and
-    application, as published in DEX_CLIENTS), the generated dex-client-<id> secret names for the confidential ones
-    and the composed config documents. The out-of-band dex-<id>-<field> connector containers live in
+    SSO facts this cluster owns (null unless sso.enabled): the dex issuer, the platform's static clients (as
+    published in DEX_CLIENTS; application clients are DexClient objects and never appear here), the generated
+    dex-client-<id> secret names for the confidential ones and the composed config documents. The out-of-band dex-<id>-<field> connector containers live in
     modules/sso-secrets (a durable root), fed the same sso value.
   EOT
   value = var.sso.enabled ? {

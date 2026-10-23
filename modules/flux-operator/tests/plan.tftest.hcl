@@ -220,7 +220,7 @@ run "application_seeds" {
   # One bootstrap-only release per application, from the local seed chart,
   # named so the release list reads as the application inventory.
   assert {
-    condition     = helm_release.application["demo"].name == "application-demo" && helm_release.application["demo"].chart == "${path.module}/charts/application"
+    condition     = helm_release.application["demo"].name == "application-demo" && helm_release.application["demo"].chart == "${path.module}/../application/charts/application"
     error_message = "each application must be one release of the local application chart, named application-<key>"
   }
 

@@ -69,18 +69,18 @@ they're off, so substitution never fails and the manifests can check for empties
 
 ### Cloud-neutral
 
-| Key(s)                                                                                                    | Value                                                                      |
-| --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `CLUSTER_NAME`                                                                                            | `name`                                                                     |
-| `PLATFORM_REGISTRY`, `CONTAINER_REGISTRY`                                                                 | Where charts, manifests and mirrored images are pulled from                |
-| `SIGNED_IDENTITY_ISSUER`, `SIGNED_IDENTITY_CHARTS`, `SIGNED_IDENTITY_IMAGES`, `SIGNED_IDENTITY_MANIFESTS` | The keyless cosign identities (empty in KMS mode)                          |
-| `FLUX_SYNC_URL`, `FLUX_SYNC_CHANNEL`, `PLATFORM_TREE`                                                     | The sync, as above                                                         |
-| `PLATFORM_COMPONENTS`                                                                                     | The election, as above                                                     |
-| `PLATFORM_DOMAIN`, `DNS_ZONE_NAME`, `DNS_DOMAIN`, `ACME_EMAIL`                                            | The served host (`dns.host` or the zone apex) and DNS/TLS wiring           |
-| `GATEWAY_IP`                                                                                              | The Gateway's reserved addresses (informational)                           |
-| `SECRET_PREFIX`                                                                                           | The Secrets Manager name prefix                                            |
-| `DEX_CONNECTORS`, `DEX_CLIENTS`                                                                           | JSON: the normalised connector, and every relying party (`[]` without SSO) |
-| `RBAC_GROUP_VIEWERS`, `…_DEVELOPERS`, `…_DEVOPS`, `…_ADMINS`                                              | The Kubernetes group names bound per role                                  |
+| Key(s)                                                                                                    | Value                                                                                 |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `CLUSTER_NAME`                                                                                            | `name`                                                                                |
+| `PLATFORM_REGISTRY`, `CONTAINER_REGISTRY`                                                                 | Where charts, manifests and mirrored images are pulled from                           |
+| `SIGNED_IDENTITY_ISSUER`, `SIGNED_IDENTITY_CHARTS`, `SIGNED_IDENTITY_IMAGES`, `SIGNED_IDENTITY_MANIFESTS` | The keyless cosign identities (empty in KMS mode)                                     |
+| `FLUX_SYNC_URL`, `FLUX_SYNC_CHANNEL`, `PLATFORM_TREE`                                                     | The sync, as above                                                                    |
+| `PLATFORM_COMPONENTS`                                                                                     | The election, as above                                                                |
+| `PLATFORM_DOMAIN`, `DNS_ZONE_NAME`, `DNS_DOMAIN`, `ACME_EMAIL`                                            | The served host (`dns.host` or the zone apex) and DNS/TLS wiring                      |
+| `GATEWAY_IP`                                                                                              | The Gateway's reserved addresses (informational)                                      |
+| `SECRET_PREFIX`                                                                                           | The Secrets Manager name prefix                                                       |
+| `DEX_CONNECTORS`, `DEX_CLIENTS`                                                                           | JSON: the normalised connector, and the platform's relying parties (`[]` without SSO) |
+| `RBAC_GROUP_VIEWERS`, `…_DEVELOPERS`, `…_DEVOPS`, `…_ADMINS`                                              | The Kubernetes group names bound per role                                             |
 
 ### AWS-specific
 
@@ -117,4 +117,5 @@ Selection lists are comma-joined. See [Capacity](capacity.md#the-nodepool-shape)
 The `flux` output exports the full published map, so you can inspect what a cluster sends to the manifests.
 
 Nothing application-specific belongs in `cluster-vars`. An application's own values go in its `<key>-vars` ConfigMap,
-through `application_vars`.
+through `application_vars`, or through [`modules/application`](../modules/application.md)'s `vars` when the application
+is published from its own root.

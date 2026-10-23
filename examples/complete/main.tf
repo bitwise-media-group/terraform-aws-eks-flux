@@ -83,13 +83,6 @@ locals {
       verify = {
         subject = "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
       }
-      dex_clients = var.sso.enabled ? {
-        patchy-status = {
-          name          = "Patchy Status"
-          redirect_uris = ["https://status.${var.dns_zone_name}/oauth2/callback"]
-          readers       = ["patchy/patchy-secrets"]
-        }
-      } : {}
     }
 
     vars = {

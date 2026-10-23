@@ -211,14 +211,15 @@ locals {
       for id, c in local.dex_connectors : merge({ id = id }, c)
     ]) : "[]"
 
-    # Every OIDC relying party dex serves, platform and application alike:
-    # the flux-web client (when elected), the PUBLIC kubectl client
-    # (sso.kubectl, the OIDC/PKCE flow kubelogin drives, no secret) and each
-    # applications[*].dex_clients entry, JSON-encoded like DEX_CONNECTORS and
-    # for the same reason. The dex component renders staticClients from it
-    # and syncs ${SECRET_PREFIX}dex-client-<id> for every confidential
-    # client; the containers are minted from the same local (sso.tf), so the
-    # ids cannot drift. The identity provider config trusting the kubectl
+    # The platform's own OIDC relying parties: the flux-web client (when
+    # elected) and the PUBLIC kubectl client (sso.kubectl, the OIDC/PKCE flow
+    # kubelogin drives, no secret), JSON-encoded like DEX_CONNECTORS and for
+    # the same reason. Application clients are DexClient objects, registered
+    # by the platform's dex-client-controller, and never appear here. The dex
+    # component renders staticClients from it and syncs
+    # ${SECRET_PREFIX}dex-client-<id> for every confidential client; the
+    # containers are minted from the same local (sso.tf), so the ids cannot
+    # drift. The identity provider config trusting the kubectl
     # tokens at the API server is created straight from var.sso.kubectl in
     # main.tf, not published here -- there is nothing for the manifests to
     # do with it.

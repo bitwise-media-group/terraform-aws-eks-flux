@@ -1307,172 +1307,46 @@ run "applications_reject_tagged_url" {
   expect_failures = [var.applications]
 }
 
-run "application_dex_clients" {
+# The contract modules/application reads to publish an application from a
+# root of its own: the same facts the cluster root resolves its own seeds
+# and reader roles from.
+run "application_target" {
   command = plan
 
   variables {
-    dns = {
-      zone_name  = "patchy.bitwisemedia.co.uk"
-      acme_email = "platform@bitwisemedia.co.uk"
-    }
-    sso = {
-      enabled   = true
-      connector = { type = "google" }
-    }
     secret_prefix = "patchy-x-"
-    workload_identity = {
-      secret_readers = [{ namespace = "demo", service_account = "demo-secrets" }]
-    }
-    applications = {
-      demo = {
-        url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
-        verify = { subject = "^https://github\\.com/org/demo/.+$" }
-        dex_clients = {
-          demo-status = {
-            name          = "Demo Status"
-            redirect_uris = ["https://demo.patchy.bitwisemedia.co.uk/auth/callback"]
-            readers       = ["demo/demo-secrets"]
-            version       = 2
-          }
-          demo-cli = {
-            public        = true
-            redirect_uris = ["http://localhost:9000/callback"]
-          }
-        }
-      }
-    }
-  }
-
-  # Every client, platform and application, lands in the one DEX_CLIENTS
-  # list the dex component renders from, sorted by id.
-  assert {
-    condition     = [for c in jsondecode(local.reserved_cluster_vars.DEX_CLIENTS) : c.id] == ["demo-cli", "demo-status", "flux-web"]
-    error_message = "DEX_CLIENTS must carry the application's clients beside the platform's, sorted by id"
   }
 
   assert {
-    condition     = one([for c in jsondecode(local.reserved_cluster_vars.DEX_CLIENTS) : c if c.id == "demo-cli"]).name == "demo-cli"
-    error_message = "a client's display name must default to its id"
-  }
-
-  # A confidential client mints its secret under the static name the
-  # application's own wiring can predict; a public client mints nothing.
-  assert {
-    condition     = aws_secretsmanager_secret.dex_client["demo-status"].name == "patchy-x-dex-client-demo-status" && !contains(keys(aws_secretsmanager_secret.dex_client), "demo-cli")
-    error_message = "a confidential application client must mint <prefix>dex-client-<id>; a public one must not"
-  }
-
-  assert {
-    condition     = aws_secretsmanager_secret_version.dex_client["demo-status"].secret_string_wo_version == 2
-    error_message = "an application client's version must drive its secret's rotation"
-  }
-
-  # dex always reads the raw secret; the client's declared readers (the
-  # application's own sync KSAs) join it.
-  assert {
-    condition     = toset(local.secret_reader_roles["dex-client-demo-status"].roles) == toset(["secrets-dex-dex-secrets", "secrets-demo-demo-secrets"])
-    error_message = "a confidential client's secret must admit dex and exactly the readers the client declares"
+    condition = (
+      output.application_target.name == "patchy-x"
+      && output.application_target.namespace == "flux-system"
+      && output.application_target.platform_registry == var.platform_registry.url
+      && output.application_target.tree == "aws"
+      && output.application_target.secret_prefix == "patchy-x-"
+    )
+    error_message = "application_target must carry the cluster name, flux namespace, platform registry, tree and secret prefix"
   }
 
   assert {
-    condition     = output.sso.clients["demo-status"].public == false && output.sso.clients["demo-cli"].public == true
-    error_message = "the sso output must list every registered client with its kind"
+    condition     = output.application_target.keyed == false && output.application_target.issuer == var.signed_identity.issuer
+    error_message = "a keyless cluster hands applications its own issuer as the verify default"
   }
 }
 
-run "application_dex_client_requires_sso" {
+run "application_target_keyed" {
   command = plan
 
   variables {
-    applications = {
-      demo = {
-        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
-        verify      = { subject = "^https://github\\.com/org/demo/.+$" }
-        dex_clients = { demo-status = {} }
-      }
+    signed_identity = {
+      kms_key_arn = "arn:aws:kms:eu-west-2:123456789012:key/1234abcd-12ab-4bcd-8def-1234567890ab"
     }
   }
 
-  expect_failures = [var.applications]
-}
-
-run "application_dex_client_rejects_platform_ids" {
-  command = plan
-
-  variables {
-    dns = {
-      zone_name  = "patchy.bitwisemedia.co.uk"
-      acme_email = "platform@bitwisemedia.co.uk"
-    }
-    sso = {
-      enabled   = true
-      connector = { type = "google" }
-    }
-    applications = {
-      demo = {
-        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
-        verify      = { subject = "^https://github\\.com/org/demo/.+$" }
-        dex_clients = { flux-web = {} }
-      }
-    }
+  assert {
+    condition     = output.application_target.keyed == true && output.application_target.issuer == null
+    error_message = "a KMS-keyed cluster has no keyless issuer to hand on, only the keyed flag"
   }
-
-  expect_failures = [var.applications]
-}
-
-run "application_dex_client_ids_unique_across_apps" {
-  command = plan
-
-  variables {
-    dns = {
-      zone_name  = "patchy.bitwisemedia.co.uk"
-      acme_email = "platform@bitwisemedia.co.uk"
-    }
-    sso = {
-      enabled   = true
-      connector = { type = "google" }
-    }
-    applications = {
-      one = {
-        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/one"
-        verify      = { subject = "^https://github\\.com/org/one/.+$" }
-        dex_clients = { status = { public = true } }
-      }
-      two = {
-        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/two"
-        verify      = { subject = "^https://github\\.com/org/two/.+$" }
-        dex_clients = { status = { public = true } }
-      }
-    }
-  }
-
-  expect_failures = [var.applications]
-}
-
-run "application_dex_client_readers_must_be_declared" {
-  command = plan
-
-  variables {
-    dns = {
-      zone_name  = "patchy.bitwisemedia.co.uk"
-      acme_email = "platform@bitwisemedia.co.uk"
-    }
-    sso = {
-      enabled   = true
-      connector = { type = "google" }
-    }
-    applications = {
-      demo = {
-        url         = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
-        verify      = { subject = "^https://github\\.com/org/demo/.+$" }
-        dex_clients = { demo-status = { readers = ["demo/demo-secrets"] } }
-      }
-    }
-  }
-
-  # A reader with no role behind it (not listed in
-  # workload_identity.secret_readers) could never be admitted.
-  expect_failures = [var.applications]
 }
 
 run "application_vars_render" {

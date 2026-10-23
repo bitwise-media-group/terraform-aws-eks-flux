@@ -52,12 +52,13 @@ nav = [
     { "registry-cache" = "modules/registry-cache.md" },
     { "kms-signing-key" = "modules/kms-signing-key.md" },
     { "sso-secrets" = "modules/sso-secrets.md" },
+    { "application" = "modules/application.md" },
     { "flux-operator" = "modules/flux-operator.md" },
     { "node-group" = "modules/node-group.md" },
   ] },
   { "Reference" = [
     { "Caveats" = "reference/caveats.md" },
-    { "Migrating from 3.x" = "reference/migrating.md" },
+    { "Migrating" = "reference/migrating.md" },
     { "Development" = "reference/development.md" },
   ] },
 ]

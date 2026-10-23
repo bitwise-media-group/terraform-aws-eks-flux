@@ -114,7 +114,8 @@ You can destroy and recreate a cluster, and it serves the same addresses with no
 | `gateway.tf`            | The Gateway's Elastic IPs (reserved or referenced) and NLB subnets                      |
 | `dns.tf`                | Looking up the delegated public (and optional private) zone                             |
 | `iam.tf`                | Workload roles: platform grants, `workload_grants`, IRSA secret readers                 |
-| `sso.tf`                | dex clients, generated client secrets, `flux-web` auth config, secret policies          |
+| `sso.tf`                | platform dex clients, generated client secrets, `flux-web` auth config, secret policies |
 | `flux.tf`               | The `cluster-vars` contract and the `flux-operator` module call                         |
 | `modules/flux-operator` | The bootstrap helm releases and the flux controllers' registry roles                    |
+| `modules/application`   | One application published from its own root; owns the shared application seed chart     |
 | `modules/node-group`    | One managed node group behind a launch template                                         |

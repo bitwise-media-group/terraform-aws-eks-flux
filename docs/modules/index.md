@@ -1,7 +1,7 @@
 # Modules
 
-The repo publishes one root module (the cluster) and six submodules. Four of the submodules are building blocks you call
-from your own roots. The other two are internal to the cluster module.
+The repo publishes one root module (the cluster) and seven submodules. Five of the submodules are building blocks you
+call from your own roots. The other two are internal to the cluster module.
 
 | Module                                | Call it from                   | Purpose                                                                            |
 | ------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------- |
@@ -10,6 +10,7 @@ from your own roots. The other two are internal to the cluster module.
 | [registry-cache](registry-cache.md)   | each cluster account           | A pull-through cache of the store, beside the nodes                                |
 | [kms-signing-key](kms-signing-key.md) | a durable root (KMS mode only) | The asymmetric key cosign signs with                                               |
 | [sso-secrets](sso-secrets.md)         | a durable root (SSO only)      | Secrets Manager containers for the dex connector's credentials                     |
+| [application](application.md)         | an application's own root      | One application published to an existing cluster, with its vars and identities     |
 | [flux-operator](flux-operator.md)     | internal (the root module)     | The flux bootstrap helm releases and the controllers' registry roles               |
 | [node-group](node-group.md)           | internal (the root module)     | One managed node group behind a launch template                                    |
 

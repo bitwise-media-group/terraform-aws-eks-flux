@@ -35,7 +35,8 @@ A few identities live next to the code they serve rather than in `iam.tf`:
 `workload_grants` carries grants for applications. It's a map of `{ namespace, service_account, policy }`, usually
 emitted by the application's own module. Each entry becomes one role, `<cluster>-<key>`, with the policy JSON attached
 inline and a Pod Identity association. The application module writes the policy (a model-invoke grant, a bucket, a
-queue). This module only mints the role and binds it.
+queue). This module only mints the role and binds it. An application published from its own root with
+[`modules/application`](../modules/application.md) mints the same roles there instead.
 
 ## IRSA for podless secret syncs
 
@@ -60,6 +61,10 @@ The reader pairs come from two places, merged together:
   `flux-web` is elected too, and
 - every pair in `workload_identity.secret_readers`, which is usually an application module's `secret_readers` output.
 
+An application published from its own root lists its pairs in [`modules/application`](../modules/application.md)'s
+`secret_readers` instead. That module mints the same `<cluster>-secrets-<ns>-<sa>` roles against the cluster's OIDC
+provider (from the `application_target` output), so `${SECRETS_ROLE_PREFIX}<ns>-<sa>` resolves either way.
+
 ## Secret naming
 
 `secret_prefix` namespaces every Secrets Manager name the platform syncs. The manifests read each secret as
@@ -70,7 +75,7 @@ Secrets fall into two lifecycles:
 
 | Secret                       | Created by                                                  | Lifecycle                                                 |
 | ---------------------------- | ----------------------------------------------------------- | --------------------------------------------------------- |
-| `dex-client-<id>`            | the cluster module (`sso.tf`)                               | The cluster's: generated, never entered by hand           |
+| `dex-client-<id>`            | the cluster module (`sso.tf`), platform clients only        | The cluster's: generated, never entered by hand           |
 | `flux-web-auth-config`       | the cluster module (`sso.tf`)                               | The cluster's: composed from the `flux-web` client secret |
 | `dex-<id>-<field>`           | [sso-secrets](../modules/sso-secrets.md), in a durable root | Durable: values added out of band, kept across rebuilds   |
 | an application's own secrets | the application's module                                    | The application module's choice                           |
@@ -94,8 +99,9 @@ None of the module's secrets have a recovery window. A deleted secret disappears
 
 - normalises the connector (defaulting its `id` and `name`, injecting the shared redirect URI) and publishes the
   non-secret half as `DEX_CONNECTORS`
-- registers every relying party in `DEX_CLIENTS`: `flux-web` when elected, the public kubectl client when `sso.kubectl`
-  is on, and each application's `dex_clients`
+- registers the platform's relying parties in `DEX_CLIENTS`: `flux-web` when elected and the public kubectl client when
+  `sso.kubectl` is on. Applications register their own clients as `DexClient` objects; see
+  [Applications](applications.md#dex-clients)
 - mints a `dex-client-<id>` secret for each confidential client
 - composes `flux-web-auth-config`, the flux-operator Web Config document with the client secret inline, from the same
   ephemeral value, so the two can't drift

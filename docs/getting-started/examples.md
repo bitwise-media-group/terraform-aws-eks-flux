@@ -9,6 +9,7 @@ on this page is pulled from those files when the site is built, so it always mat
 | [`registry-cache`](#registry-cache) | each cluster account | A pull-through cache of the store.                      |
 | [`minimal`](#minimal)               | a cluster account    | The smallest cluster that reconciles.                   |
 | [`complete`](#complete)             | a cluster account    | Every surface on, with an application composed in.      |
+| [`application`](#application)       | an application root  | An application published to an existing cluster.        |
 
 Each example takes its account-specific values (VPC ids, subnet ids, the store's registry id, signing subjects) as
 variables. See `variables.tf` beside each `main.tf`.
@@ -63,3 +64,14 @@ application repo's module. See [Applications](../concepts/applications.md).
     Both cluster examples configure the helm provider with an `exec` plugin that runs `aws eks get-token`, not
     `data.aws_eks_cluster_auth`. A first apply takes much longer than that data source's 15-minute token lasts. See
     [Caveats](../reference/caveats.md#the-helm-provider-needs-the-aws-cli).
+
+## application
+
+An application published from a root of its own, with nothing changed in the cluster root: the seed, its vars, a
+namespace and a secret reader role, all keyed to the cluster through the cluster root's `application_target` output. It
+takes that output as a variable so it plans on its own; a real root reads it with `terraform_remote_state`. See
+[application](../modules/application.md).
+
+```hcl title="examples/application/main.tf"
+--8<-- "examples/application/main.tf"
+```

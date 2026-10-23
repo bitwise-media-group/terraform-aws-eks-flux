@@ -652,13 +652,10 @@ variable "applications" {
       - depends_on: platform Kustomizations the application waits for (default kyverno-policies).
       - verify: keyless (subject, a Fulcio certificate-subject regexp; issuer defaults to signed_identity.issuer)
         XOR keyed (the cosign-pub public-key Secret, KMS mode only).
-      - dex_clients: OIDC relying parties the application registers with the platform's dex, keyed by client id.
-        A confidential client (public = false) gets a generated secret in Secrets Manager
-        (<secret_prefix>dex-client-<id>, rotated by bumping version) that dex and the client's readers (the
-        application's secret-sync KSAs, as <namespace>/<service-account>) may read; a public client (PKCE) gets
-        none. Every client is published in DEX_CLIENTS. Requires sso.enabled.
     Application vars ride separately in application_vars, so a composite image's inner applications can each have
-    their own ConfigMap.
+    their own ConfigMap. An application registers its dex clients itself, as DexClient objects in its own image
+    (the platform's dex-client-controller reconciles them). An application can instead be published from a root of
+    its own with modules/application and this module's application_target output - never from both.
   EOT
   type = map(object({
     url        = string
@@ -675,13 +672,6 @@ variable "applications" {
     prune       = optional(bool, true)
     wait        = optional(bool, true)
     timeout     = optional(string, "5m")
-    dex_clients = optional(map(object({
-      name          = optional(string)
-      public        = optional(bool, false)
-      redirect_uris = optional(list(string), [])
-      readers       = optional(set(string), [])
-      version       = optional(number, 1)
-    })), {})
   }))
   nullable = false
   default  = {}
@@ -744,51 +734,6 @@ variable "applications" {
     ])
     error_message = "applications[*].pull_secret only applies to images outside the platform registry - the platform registry is pulled with the flux controllers' Pod Identity."
   }
-
-  validation {
-    condition = alltrue([
-      for app in values(var.applications) : length(app.dex_clients) == 0 || var.sso.enabled
-    ])
-    error_message = "applications[*].dex_clients requires sso.enabled - without dex there is nothing to register a client with."
-  }
-
-  validation {
-    condition = alltrue(flatten([
-      for app in values(var.applications) : [
-        for id in keys(app.dex_clients) : can(regex("^[a-z0-9-]+$", id)) && id != "flux-web" && id != var.sso.kubectl.client_id
-      ]
-    ]))
-    error_message = "applications[*].dex_clients ids must match ^[a-z0-9-]+$ and must not reuse the platform's own client ids (flux-web, sso.kubectl.client_id)."
-  }
-
-  validation {
-    condition = length(flatten([for app in values(var.applications) : keys(app.dex_clients)])) == length(distinct(flatten([
-      for app in values(var.applications) : keys(app.dex_clients)
-    ])))
-    error_message = "applications[*].dex_clients ids must be unique across every application - dex has one flat client namespace."
-  }
-
-  validation {
-    condition = alltrue(flatten([
-      for app in values(var.applications) : [
-        for client in values(app.dex_clients) : [
-          for reader in client.readers : contains([
-            for pair in var.workload_identity.secret_readers : "${pair.namespace}/${pair.service_account}"
-          ], reader)
-        ]
-      ]
-    ]))
-    error_message = "Each applications[*].dex_clients readers entry must be a <namespace>/<service-account> pair listed in workload_identity.secret_readers - only a declared secret-sync reader has a role to admit."
-  }
-
-  validation {
-    condition = alltrue(flatten([
-      for app in values(var.applications) : [
-        for client in values(app.dex_clients) : !client.public || length(client.readers) == 0
-      ]
-    ]))
-    error_message = "A public dex client has no secret, so applications[*].dex_clients readers only applies to confidential clients."
-  }
 }
 
 variable "application_vars" {
@@ -841,9 +786,9 @@ variable "sso" {
     clients holds the per-client knobs for the platform's own generated relying-party pair (key: flux-web) -- today
     just version, the client secret's rotation counter (absent clients sit at 1): bump it to mint a new client secret;
     the raw dex-client-* secret and any config document embedding the same value rewrite in one apply, so the pair
-    cannot drift (then restart dex: it reads client secrets from env at startup). Application clients carry their
-    own version under applications[*].dex_clients; every client, platform or application, is published in
-    DEX_CLIENTS for the dex component to render.
+    cannot drift (then restart dex: it reads client secrets from env at startup). Every platform client is published
+    in DEX_CLIENTS for the dex component to render; application clients never pass through here - an application
+    ships DexClient objects in its own image, which the platform's dex-client-controller registers with dex.
     kubectl federates the EKS API server itself to dex (an aws_eks_identity_provider_config), so kubectl can
     authenticate humans through Okta/whatever upstream connector without an IAM principal at all -- pair it with an
     rbac.groups entry that has no principal_arn, just the OIDC-asserted group name. client_id names dex's PUBLIC
@@ -891,7 +836,7 @@ variable "sso" {
 
   validation {
     condition     = alltrue([for client in keys(var.sso.clients) : contains(["flux-web"], client)])
-    error_message = "sso.clients keys must be platform client ids: flux-web (application clients are declared under applications[*].dex_clients)."
+    error_message = "sso.clients keys must be platform client ids: flux-web (application clients are DexClient objects in the application's own image)."
   }
 
   validation {

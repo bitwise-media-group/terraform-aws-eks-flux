@@ -253,7 +253,7 @@ resource "helm_release" "application" {
   name      = "application-${each.key}"
   namespace = var.namespace
 
-  chart = "${path.module}/charts/application"
+  chart = "${path.module}/../application/charts/application"
 
   values = [
     yamlencode({

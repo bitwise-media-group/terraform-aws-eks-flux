@@ -1,29 +1,26 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-# The per-cluster SSO client pairs between dex and its relying parties: the
-# platform's own (the Flux status web UI, the public kubectl client) and every
-# client an application declares (applications[*].dex_clients). The
-# confidential ones are internal shared secrets with the cluster's lifecycle
+# The per-cluster SSO client pairs between dex and the platform's own relying
+# parties (the Flux status web UI, the public kubectl client). Application
+# clients are not here: an application ships DexClient objects in its own
+# image, and the platform's dex-client-controller registers them with dex and
+# keeps their secrets in the application's namespace. The confidential
+# platform clients are internal shared secrets with the cluster's lifecycle
 # -- generated here, never entered out of band: each value is an ephemeral
 # random_password written through write-only attributes, so it exists in
 # Secrets Manager and nowhere else (not in state, not in plan). The platform's
 # dex component syncs each ${SECRET_PREFIX}dex-client-<id> secret into dex's
-# env, and an application's own secret-sync recipe reads it into its
-# namespace through the readers it declares.
+# env.
 #
 # One platform consumer needs the value INLINE in a composed config document
 # rather than as a raw key: flux-web-auth-config, the flux-operator Web Config
 # API document (the operator accepts no file or env indirection). Written from
 # the same ephemeral value as the raw dex-client-flux-web secret in the same
-# apply, so the pair cannot drift. An application needing the same treatment
-# either reads the raw synced key (dex supports clientSecretFile-style
-# consumers) or composes its document in a second-stage module of its own
-# repository, reading the container by its static name after the cluster
-# apply -- the cluster module never learns an application's config shape.
+# apply, so the pair cannot drift.
 #
-# Everything here follows the elections (platform_components, sso.kubectl,
-# applications) and requires the DNS surface (issuer and redirect URLs need the
+# Everything here follows the elections (platform_components, sso.kubectl)
+# and requires the DNS surface (issuer and redirect URLs need the
 # domain): an unelected relying party gets no client, no secret, no grants.
 #
 # dex federates to whatever upstream identity provider sso.connector
@@ -52,7 +49,6 @@ locals {
         name          = "Flux Status"
         public        = false
         redirect_uris = ["https://flux.${local.platform_domain}/oauth2/callback"]
-        readers       = []
         version       = try(var.sso.clients["flux-web"].version, 1)
       }
     } : {},
@@ -61,40 +57,21 @@ locals {
         name          = "kubectl"
         public        = true
         redirect_uris = var.sso.kubectl.redirect_uris
-        readers       = []
         version       = 1
       }
     } : {},
   ) : {}
 
-  # Every client an application declares, flattened into the one dex client
-  # namespace (var.applications' validations guarantee the ids are unique
-  # across applications and never collide with the platform's). The display
-  # name defaults to the id.
-  application_dex_clients = var.sso.enabled ? merge([
-    for app in values(var.applications) : {
-      for id, client in app.dex_clients : id => {
-        name          = coalesce(client.name, id)
-        public        = client.public
-        redirect_uris = client.redirect_uris
-        readers       = client.readers
-        version       = client.version
-      }
-    }
-  ]...) : {}
-
-  # client id -> the normalized client, platform and application alike. This
-  # is what DEX_CLIENTS publishes (flux.tf) and what the secrets below are
-  # minted from, so the two cannot drift.
-  dex_clients = merge(local.platform_dex_clients, local.application_dex_clients)
+  # client id -> the normalized client. This is what DEX_CLIENTS publishes
+  # (flux.tf) and what the secrets below are minted from, so the two cannot
+  # drift.
+  dex_clients = local.platform_dex_clients
 
   # The clients that carry a generated secret, with the KSA subjects allowed
-  # to read it: always dex (staticClients read via env), plus whichever
-  # secret-sync readers the client declares (an application's own
-  # namespace/service-account pairs, validated to exist in
-  # workload_identity.secret_readers).
+  # to read it: dex alone (staticClients read via env). flux-web's own
+  # consumer reads the composed flux-web-auth-config document instead.
   dex_client_readers = {
-    for id, client in local.dex_clients : id => concat(["dex/dex-secrets"], tolist(client.readers))
+    for id, client in local.dex_clients : id => ["dex/dex-secrets"]
     if !client.public
   }
 

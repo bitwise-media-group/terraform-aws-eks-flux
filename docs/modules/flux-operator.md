@@ -10,15 +10,16 @@ platform in a single apply. Using helm releases rather than `kubernetes_manifest
 
 ## What it creates
 
-| Release / resource            | Contents                                                                                                                    | Lifecycle            |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `helm_release.flux_operator`  | The operator and its CRDs                                                                                                   | Bootstrap-only       |
-| `helm_release.cluster_inputs` | Local chart `charts/cluster-inputs`: `cluster-vars`, each `<key>-vars`, the pre-created namespaces, `cosign-pub` (KMS mode) | Terraform-reconciled |
-| `helm_release.flux_instance`  | The `FluxInstance`, syncing the platform entrypoint image                                                                   | Bootstrap-only       |
-| `helm_release.application`    | Local chart `charts/application`, one per key: the `ResourceSetInputProvider` + `ResourceSet` named `<key>-manifests`       | Bootstrap-only       |
-| Pod Identity roles            | Registry read for `source-controller` and `flux-operator`                                                                   | Terraform-reconciled |
+| Release / resource            | Contents                                                                                                                             | Lifecycle            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------- |
+| `helm_release.flux_operator`  | The operator and its CRDs                                                                                                            | Bootstrap-only       |
+| `helm_release.cluster_inputs` | Local chart `charts/cluster-inputs`: `cluster-vars`, each `<key>-vars`, the pre-created namespaces, `cosign-pub` (KMS mode)          | Terraform-reconciled |
+| `helm_release.flux_instance`  | The `FluxInstance`, syncing the platform entrypoint image                                                                            | Bootstrap-only       |
+| `helm_release.application`    | Local chart `../application/charts/application`, one per key: the `ResourceSetInputProvider` + `ResourceSet` named `<key>-manifests` | Bootstrap-only       |
+| Pod Identity roles            | Registry read for `source-controller` and `flux-operator`                                                                            | Terraform-reconciled |
 
-The two local charts ship inside the module under `charts/`.
+`cluster-inputs` ships inside the module under `charts/`. The application chart lives in [application](application.md)'s
+`charts/`, shared by both ways of seeding an application.
 
 ## How it works
 
