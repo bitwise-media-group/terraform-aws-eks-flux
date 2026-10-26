@@ -124,6 +124,41 @@ run "reads_are_org_wide" {
   }
 }
 
+run "reads_narrow_to_accounts" {
+  command = plan
+
+  variables {
+    account_ids = ["999988887777", "111122223333"]
+  }
+
+  # Still one statement and still conditioned on the org: the account list is
+  # ANDed with it under the same StringEquals, never a replacement for it.
+  assert {
+    condition     = length(jsondecode(aws_ecr_registry_policy.platform.policy).Statement) == 1
+    error_message = "narrowing to accounts must not add a statement beside the pull-through-cache grant"
+  }
+
+  assert {
+    condition     = jsondecode(aws_ecr_registry_policy.platform.policy).Statement[0].Condition.StringEquals["aws:PrincipalOrgID"] == "o-abcdefghij"
+    error_message = "the account list narrows the organization grant; the org condition must stay"
+  }
+
+  assert {
+    condition     = jsondecode(aws_ecr_registry_policy.platform.policy).Statement[0].Condition.StringEquals["aws:PrincipalAccount"] == ["111122223333", "999988887777"]
+    error_message = "account_ids must become a sorted aws:PrincipalAccount condition on the pull-through-cache grant"
+  }
+}
+
+run "account_ids_must_be_account_ids" {
+  command = plan
+
+  variables {
+    account_ids = ["o-abcdefghij"]
+  }
+
+  expect_failures = [var.account_ids]
+}
+
 run "direct_pull_is_opt_in" {
   command = plan
 

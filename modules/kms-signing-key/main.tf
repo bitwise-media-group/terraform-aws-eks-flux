@@ -68,7 +68,8 @@ locals {
   # org-wide (wildcard principal, aws:PrincipalOrgID condition) means a new
   # cluster account onboards without editing this module: the cluster module's
   # plan-time aws_kms_public_key read, the bootstrap public-key Secret, and
-  # kyverno's admission-time kms:Verify calls all just work.
+  # kyverno's admission-time kms:Verify calls all just work. account_ids trades
+  # that for an explicit list where only known accounts should verify.
   verify_statements = var.organization_id != null ? [
     {
       Sid       = "OrganizationVerify"
@@ -77,7 +78,13 @@ locals {
       Resource  = "*"
       Principal = { AWS = "*" }
       Condition = merge(
-        { StringEquals = { "aws:PrincipalOrgID" = var.organization_id } },
+        {
+          StringEquals = merge(
+            { "aws:PrincipalOrgID" = var.organization_id },
+            # Optional narrowing to specific member accounts, ANDed with the org.
+            length(var.account_ids) > 0 ? { "aws:PrincipalAccount" = sort(var.account_ids) } : {},
+          )
+        },
         # Optional narrowing to specific organizational units.
         length(var.organization_paths) > 0 ? {
           "ForAnyValue:StringLike" = { "aws:PrincipalOrgPaths" = var.organization_paths }

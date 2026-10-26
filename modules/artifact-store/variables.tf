@@ -55,6 +55,22 @@ variable "organization_paths" {
   default     = []
 }
 
+variable "account_ids" {
+  description = <<-EOT
+    Optional aws:PrincipalAccount ids narrowing the pull-through grant to particular member accounts, for a store only
+    a known set of accounts should cache - onboarding another one then means adding it here. Empty admits the whole
+    organization (or organization_paths).
+  EOT
+  type        = set(string)
+  nullable    = false
+  default     = []
+
+  validation {
+    condition     = alltrue([for account_id in var.account_ids : can(regex("^[0-9]{12}$", account_id))])
+    error_message = "account_ids must be 12-digit AWS account ids."
+  }
+}
+
 variable "direct_pull_principals" {
   description = <<-EOT
     IAM principals allowed to pull from the store DIRECTLY rather than through a pull-through cache - the escape hatch

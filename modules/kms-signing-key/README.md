@@ -50,6 +50,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
+| account\_ids | Optional aws:PrincipalAccount ids narrowing the organization-wide verify grant to particular member accounts.<br/>Empty admits the whole organization (or organization\_paths); it needs organization\_id, since without one nothing<br/>outside the owning account may verify at all. | `set(string)` | `[]` | no |
 | additional\_key\_policy\_statements | Extra IAM statements merged into the key policy. A KMS key has exactly one policy and this module owns it, so any<br/>further resource-level grants (auditors, external verifiers outside the organization) must be passed here rather<br/>than managed elsewhere. | `list(any)` | `[]` | no |
 | deletion\_window\_in\_days | Days a scheduled deletion waits before the key is destroyed. Defaults to the KMS maximum: deleting this key<br/>permanently breaks cosign verification of every artifact ever signed with it, so the window should stay as long as<br/>possible. | `number` | `30` | no |
 | key\_spec | Asymmetric key spec, immutable after creation. The default matches cosign's own default algorithm (ECDSA P-256 /<br/>SHA-256); the allowed set is the intersection of KMS signing specs and what cosign's AWS KMS provider supports - <br/>notably excluding ECC\_SECG\_P256K1, which sigstore does not accept. | `string` | `"ECC_NIST_P256"` | no |

@@ -17,7 +17,8 @@ variable "upstream" {
   description = <<-EOT
     The artifact store this caches. registry_id and repository_prefix come straight from the artifact-store module's
     registry_id / repository_prefix outputs; region is the store's region. The store must admit this account - which it
-    does org-wide by default (aws:PrincipalOrgID), so no change there is needed to onboard.
+    does org-wide by default (aws:PrincipalOrgID), so no change there is needed to onboard, unless the store narrows
+    its grant with account_ids, which must then list this account.
   EOT
   type = object({
     registry_id       = string

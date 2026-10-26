@@ -128,6 +128,36 @@ run "verification_is_org_wide" {
   }
 }
 
+run "verification_narrows_to_accounts" {
+  command = plan
+
+  variables {
+    organization_id = "o-abcdefghij"
+    account_ids     = ["999988887777", "111122223333"]
+  }
+
+  # The account list is ANDed with the org id under the same StringEquals.
+  assert {
+    condition = anytrue([
+      for statement in jsondecode(aws_kms_key.signing.policy).Statement :
+      statement.Sid == "OrganizationVerify" &&
+      statement.Condition.StringEquals["aws:PrincipalOrgID"] == "o-abcdefghij" &&
+      statement.Condition.StringEquals["aws:PrincipalAccount"] == ["111122223333", "999988887777"]
+    ])
+    error_message = "account_ids must narrow the org verify grant with a sorted aws:PrincipalAccount condition"
+  }
+}
+
+run "account_ids_need_an_organization" {
+  command = plan
+
+  variables {
+    account_ids = ["999988887777"]
+  }
+
+  expect_failures = [var.account_ids]
+}
+
 run "cross_account_signing_is_opt_in" {
   command = plan
 

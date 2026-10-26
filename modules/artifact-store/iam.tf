@@ -263,7 +263,8 @@ locals {
   # as one <account>:root principal per downstream account; the actual caller
   # is that account's PTC role (assumed by pullthroughcache.ecr.amazonaws.com),
   # so aws:PrincipalOrgID matches it and covers every current AND future member
-  # account - no list to maintain as clusters come online.
+  # account - no list to maintain as clusters come online. account_ids trades
+  # that for an explicit list where only known accounts should cache the store.
   pull_through_cache_statement = {
     Sid    = "OrganizationPullThroughCache"
     Effect = "Allow"
@@ -279,7 +280,13 @@ locals {
     Principal = { AWS = "*" }
 
     Condition = merge(
-      { StringEquals = { "aws:PrincipalOrgID" = var.organization_id } },
+      {
+        StringEquals = merge(
+          { "aws:PrincipalOrgID" = var.organization_id },
+          # Optional narrowing to specific member accounts, ANDed with the org.
+          length(var.account_ids) > 0 ? { "aws:PrincipalAccount" = sort(var.account_ids) } : {},
+        )
+      },
       # Optional narrowing to specific organizational units.
       length(var.organization_paths) > 0 ? {
         "ForAnyValue:StringLike" = { "aws:PrincipalOrgPaths" = var.organization_paths }

@@ -91,6 +91,27 @@ variable "organization_paths" {
   default     = []
 }
 
+variable "account_ids" {
+  description = <<-EOT
+    Optional aws:PrincipalAccount ids narrowing the organization-wide verify grant to particular member accounts.
+    Empty admits the whole organization (or organization_paths); it needs organization_id, since without one nothing
+    outside the owning account may verify at all.
+  EOT
+  type        = set(string)
+  nullable    = false
+  default     = []
+
+  validation {
+    condition     = alltrue([for account_id in var.account_ids : can(regex("^[0-9]{12}$", account_id))])
+    error_message = "account_ids must be 12-digit AWS account ids."
+  }
+
+  validation {
+    condition     = length(var.account_ids) == 0 || var.organization_id != null
+    error_message = "account_ids narrows the organization verify grant, so it needs organization_id."
+  }
+}
+
 variable "signer_principals" {
   description = <<-EOT
     IAM principals in OTHER accounts allowed to sign with this key (kms:Sign plus the reads cosign needs) - e.g. an
