@@ -111,3 +111,40 @@ resource "helm_release" "seed" {
   # Kustomization's first substitution.
   depends_on = [helm_release.inputs]
 }
+
+# The application's own capacity, joined exactly the way the cluster root
+# joins its node_groups: the shared Linux node role (the root's EC2_LINUX
+# access entry already admits it), the node subnets and the EKS-managed
+# cluster security group. Nothing schedules on a new node until Cilium can give
+# it an address - the operator lifts this taint once the agent is ready - so
+# the group never races the CNI the way an untainted one would.
+module "node_group" {
+  source   = "../node-group"
+  for_each = var.node_groups
+
+  cluster_name              = var.cluster.name
+  name                      = "${var.name}-${each.key}"
+  node_role_arn             = var.cluster.node_role_arn
+  subnet_ids                = var.cluster.node_subnet_ids
+  cluster_security_group_id = var.cluster.cluster_security_group_id
+
+  instance_types = each.value.instance_types
+  capacity_type  = each.value.capacity_type
+  min_size       = each.value.min_size
+  max_size       = each.value.max_size
+  desired_size   = each.value.desired_size
+  disk_size_gib  = each.value.disk_size_gib
+  ami_type       = each.value.ami_type
+
+  labels = each.value.labels
+  taints = concat(
+    [{
+      key    = "node.cilium.io/agent-not-ready"
+      value  = "true"
+      effect = "NO_EXECUTE"
+    }],
+    each.value.taints,
+  )
+
+  tags = var.tags
+}

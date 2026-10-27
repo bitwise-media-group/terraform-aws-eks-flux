@@ -21,9 +21,12 @@ variable "network" {
     Existing VPC wiring, created upstream and never owned here.
     node_subnet_ids are the private subnets nodes launch into; pod_subnet_ids narrows the subnets Cilium
     allocates pod ENIs from (defaults to the node subnets); public_subnet_ids carry the public Gateway's NLB and its
-    reserved EIPs (a private Gateway spans the node subnets instead, so they may be omitted then).
-    manage_discovery_tags lets this module apply the karpenter.sh/discovery tag to those subnets - turn it off
-    where the VPC owner tags them instead.
+    reserved EIPs (a private Gateway spans the internal subnets instead, so they may be omitted then);
+    internal_subnet_ids moves a private Gateway's internal NLB off the node subnets - onto subnets routable from
+    outside the VPC, say, where the node subnets are not (defaults to the node subnets).
+    manage_discovery_tags lets this module apply the karpenter.sh/discovery tag to the node and public subnets -
+    turn it off where the VPC owner tags them instead. The internal subnets are never tagged: the Gateway names
+    them explicitly, and an untagged subnet is one Karpenter never launches nodes into.
     security_group_ids attach to the control-plane ENIs alongside the EKS-managed cluster security group - use
     them for caller-owned rules (e.g. API access from a bastion or VPN range).
     restrict_default_security_group revokes the allow-all egress rules (0.0.0.0/0 and ::/0) on the EKS-managed
@@ -39,6 +42,7 @@ variable "network" {
     node_subnet_ids                 = set(string)
     pod_subnet_ids                  = optional(set(string), [])
     public_subnet_ids               = optional(set(string), [])
+    internal_subnet_ids             = optional(set(string), [])
     manage_discovery_tags           = optional(bool, true)
     security_group_ids              = optional(set(string), [])
     restrict_default_security_group = optional(bool, false)
@@ -444,9 +448,10 @@ variable "gateway" {
     and new hosts are manifests-only. Reserving them here (default) keeps them outside the disposable cluster's
     lifecycle, so destroy/recreate serves the same addresses; alternatively reference existing allocations by id.
 
-    private flips the NLB internal: it spans the node subnets instead of the public ones and takes no Elastic IPs
-    (internal NLBs cannot carry them), so the whole EIP surface above goes inert. A private Gateway is only
-    reachable through in-VPC resolution, which is what requires dns.private_zone - the public zone still exists,
+    private flips the NLB internal: it spans network.internal_subnet_ids (the node subnets when that is empty)
+    instead of the public ones and takes no Elastic IPs (internal NLBs cannot carry them), so the whole EIP surface
+    above goes inert. A private Gateway is only reachable through private resolution - the VPCs the private zone is
+    associated with - which is what requires dns.private_zone - the public zone still exists,
     carrying only the cert-manager DNS-01 challenges that certificate issuance needs.
 
     install_crds publishes GATEWAY_API_CRDS, which has the flux-manifests gateway component install the Gateway API
@@ -477,6 +482,11 @@ variable "gateway" {
   validation {
     condition     = !var.gateway.private || length(var.gateway.allocation_ids) == 0
     error_message = "gateway.private is an internal NLB, which cannot carry Elastic IPs - allocation_ids requires a public Gateway."
+  }
+
+  validation {
+    condition     = var.gateway.private || length(var.network.internal_subnet_ids) == 0
+    error_message = "network.internal_subnet_ids only carries a private Gateway's internal NLB - it requires gateway.private."
   }
 
   validation {

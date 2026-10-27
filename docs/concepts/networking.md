@@ -75,8 +75,13 @@ The allocation ids reach the gateway component as `GATEWAY_EIP_ALLOCATIONS`, alo
 ### A private Gateway
 
 With `gateway.private = true` the NLB is `internal`, spans the node subnets, and has no Elastic IPs. It's only reachable
-through in-VPC resolution, so it requires `dns.private_zone`, and stable addressing comes from the private zone's
+through private resolution, so it requires `dns.private_zone`, and stable addressing comes from the private zone's
 records. The EIP vars are published empty, and `GATEWAY_NLB_SCHEME` becomes `internal`.
+
+`network.internal_subnet_ids` moves the NLB onto other subnets, which `GATEWAY_SUBNETS` then names. Use it when the node
+subnets aren't routable from where clients are, for example when nodes sit in a non-routable range and NAT out, and a
+smaller set of routable subnets carries ingress. The NLB keeps `instance` targets, so the nodes stay where they are. The
+module never tags these subnets with the discovery tag, so Karpenter never launches nodes into them.
 
 ### Gateway API CRDs
 

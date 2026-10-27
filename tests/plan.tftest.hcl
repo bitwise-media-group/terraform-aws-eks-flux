@@ -752,6 +752,55 @@ run "gateway_private" {
   }
 }
 
+# Where the node subnets are not routable from the clients (a NAT'd range),
+# a smaller set of routable subnets carries the internal NLB instead; the
+# nodes stay put behind it (instance targets), and the internal subnets are
+# never discovery-tagged, so Karpenter never launches nodes into them.
+run "gateway_private_internal_subnets" {
+  command = plan
+
+  variables {
+    network = {
+      vpc_id              = "vpc-0123456789abcdef0"
+      node_subnet_ids     = ["subnet-0aaa", "subnet-0bbb"]
+      internal_subnet_ids = ["subnet-0eee", "subnet-0fff"]
+    }
+    dns = {
+      zone_name    = "patchy.bitwisemedia.co.uk"
+      private_zone = true
+      acme_email   = "platform@bitwisemedia.co.uk"
+    }
+    gateway = {
+      private = true
+    }
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.GATEWAY_NLB_SCHEME == "internal" && local.reserved_cluster_vars.GATEWAY_SUBNETS == "subnet-0eee,subnet-0fff"
+    error_message = "a private Gateway given internal_subnet_ids must span those rather than the node subnets"
+  }
+
+  assert {
+    condition     = keys(aws_ec2_tag.discovery) == ["subnet-0aaa", "subnet-0bbb"]
+    error_message = "the internal subnets must never carry the discovery tag - Karpenter would launch nodes into them"
+  }
+}
+
+run "internal_subnets_require_private_gateway" {
+  command = plan
+
+  variables {
+    network = {
+      vpc_id              = "vpc-0123456789abcdef0"
+      node_subnet_ids     = ["subnet-0aaa", "subnet-0bbb"]
+      public_subnet_ids   = ["subnet-0ccc", "subnet-0ddd"]
+      internal_subnet_ids = ["subnet-0eee", "subnet-0fff"]
+    }
+  }
+
+  expect_failures = [var.gateway]
+}
+
 run "gateway_private_requires_private_zone" {
   command = plan
 

@@ -35,6 +35,7 @@ charts ship inside the module, so the helm provider needs no registry credential
 | `helm_release.inputs` | Local chart `charts/inputs`: the `<name>-vars` ConfigMap and the pre-created namespaces, only when there are any | Terraform-reconciled |
 | Workload roles        | `<cluster>-<key>` per `workload_grants` entry, bound through Pod Identity                                        | Terraform-reconciled |
 | Secret reader roles   | `<cluster>-secrets-<ns>-<sa>` per `secret_readers` pair, trusted through the cluster's IRSA provider             | Terraform-reconciled |
+| Node groups           | `<cluster>-<name>-<key>` per `node_groups` entry, through [node-group](node-group.md)                            | Terraform-reconciled |
 
 ## How it works
 
@@ -51,18 +52,28 @@ refuses a release or a namespace another release owns, and IAM refuses a duplica
 
 `cluster` is the cluster root's `application_target` output, verbatim:
 
-| Field                              | Used for                                                                         |
-| ---------------------------------- | -------------------------------------------------------------------------------- |
-| `name`                             | The IAM role prefix and the Pod Identity associations                            |
-| `namespace`                        | Where the seed and the vars live (the flux namespace)                            |
-| `platform_registry`                | Picks the listing and pull dialect, as in [flux-operator](flux-operator.md)      |
-| `tree`                             | The default image path, `./deploy/<tree>`                                        |
-| `issuer`, `keyed`                  | The default keyless issuer, or KMS mode (null issuer, `cosign-pub` verification) |
-| `oidc_provider_arn`, `oidc_issuer` | The secret reader roles' IRSA trust                                              |
-| `secret_prefix`                    | The secret reader roles' `GetSecretValue` scope, `${SECRET_PREFIX}*`             |
+| Field                                                           | Used for                                                                                                                                                                   |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                                                          | The IAM role prefix and the Pod Identity associations                                                                                                                      |
+| `namespace`                                                     | Where the seed and the vars live (the flux namespace)                                                                                                                      |
+| `platform_registry`                                             | Picks the listing and pull dialect, as in [flux-operator](flux-operator.md)                                                                                                |
+| `tree`                                                          | The default image path, `./deploy/<tree>`                                                                                                                                  |
+| `issuer`, `keyed`                                               | The default keyless issuer, or KMS mode (null issuer, `cosign-pub` verification)                                                                                           |
+| `oidc_provider_arn`, `oidc_issuer`                              | The secret reader roles' IRSA trust                                                                                                                                        |
+| `secret_prefix`                                                 | The secret reader roles' `GetSecretValue` scope, `${SECRET_PREFIX}*`                                                                                                       |
+| `node_role_arn`, `node_subnet_ids`, `cluster_security_group_id` | How `node_groups` join: the shared Linux node role, the node subnets and the cluster security group. Optional, so an older target still plans; `node_groups` requires them |
 
 The image's validations run against it, so an ECR image outside `platform_registry`, a keyed image on a keyless cluster
 and a pull secret on the platform registry all fail at plan.
+
+### Node groups
+
+`node_groups` is capacity the application brings with it: a static pool Karpenter can't express, such as another
+architecture only the application's pods tolerate. Each group joins the way the cluster root's own `node_groups` do,
+with the shared Linux node role (the root's `EC2_LINUX` access entry already admits it), the node subnets and the
+EKS-managed cluster security group. It also gets the Cilium `agent-not-ready` bootstrap taint ahead of the application's
+own taints. Add a taint of your own to keep everything else off the group. Groups are Linux only, because Windows nodes
+need the root's Windows node role.
 
 ### Dex clients
 

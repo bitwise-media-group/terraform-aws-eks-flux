@@ -21,7 +21,8 @@
 # way a cloud-accounts-owned reservation would arrive.
 #
 # A private Gateway (var.gateway.private) is an internal NLB: it spans the
-# node subnets rather than the public ones and cannot carry Elastic IPs, so
+# internal subnets (network.internal_subnet_ids, the node subnets by default)
+# rather than the public ones and cannot carry Elastic IPs, so
 # the whole EIP surface here goes inert (validation keeps allocation_ids
 # empty) and stability comes from the private zone's records instead.
 
@@ -49,7 +50,10 @@ locals {
   gateway_allocation_ids = sort([for eip in local.gateway_eips : eip.id])
   gateway_addresses      = sort([for eip in local.gateway_eips : eip.public_ip])
 
-  # The subnets the NLB spans: the node (private) subnets for an internal
-  # NLB, the public subnets otherwise.
-  gateway_subnet_ids = var.gateway.private ? var.network.node_subnet_ids : var.network.public_subnet_ids
+  # The subnets the NLB spans: the internal subnets for an internal NLB
+  # (the node subnets unless the caller names others), the public subnets
+  # otherwise.
+  gateway_subnet_ids = !var.gateway.private ? var.network.public_subnet_ids : (
+    length(var.network.internal_subnet_ids) > 0 ? var.network.internal_subnet_ids : var.network.node_subnet_ids
+  )
 }

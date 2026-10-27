@@ -152,7 +152,9 @@ output "application_target" {
     Everything modules/application needs to publish an application to this cluster from a root of its own: the
     cluster name, the flux namespace, the platform registry url, the per-cloud tree (flux.sync.path), the keyless
     signing issuer (null in KMS mode), whether the cluster is KMS-keyed, the IRSA OIDC provider ARN and issuer host
-    the secret-sync reader roles trust, and the SECRET_PREFIX. Pass it to the module's cluster input verbatim.
+    the secret-sync reader roles trust, the SECRET_PREFIX, and the Linux node role, node subnets and EKS-managed
+    cluster security group an application's own node groups join with. Pass it to the module's cluster input
+    verbatim.
   EOT
   value = {
     name              = aws_eks_cluster.main.name
@@ -164,6 +166,10 @@ output "application_target" {
     oidc_provider_arn = aws_iam_openid_connect_provider.irsa.arn
     oidc_issuer       = local.oidc_issuer_host
     secret_prefix     = local.secret_prefix
+
+    node_role_arn             = aws_iam_role.nodes.arn
+    node_subnet_ids           = var.network.node_subnet_ids
+    cluster_security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
   }
 }
 
