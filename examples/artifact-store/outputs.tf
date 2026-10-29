@@ -1,13 +1,18 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-output "platform_registry" {
-  description = "Pass to a cluster module only when it reads the store DIRECTLY (is_pull_through_cache = false); most clusters take a registry-cache module's output instead."
-  value       = module.store.platform_registry
+output "platform_registries" {
+  description = "Every region's registry, keyed by region - pass a cluster the entry for its own region as its platform_registry."
+  value       = module.store.platform_registries
+}
+
+output "replication_backfill_commands" {
+  description = "Per replica region, the command that copies what the store already holds to it - run once after adding a region."
+  value       = module.store.replication_backfill_commands
 }
 
 output "registry_id" {
-  description = "The store account id - the upstream.registry_id every consuming account's registry-cache points at."
+  description = "The store account id - the store.registry_id of the cluster examples."
   value       = module.store.registry_id
 }
 

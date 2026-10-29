@@ -67,7 +67,7 @@ module "patchy" {
   source = "git::https://github.com/bitwise-media-group/patchy-app-manifests.git//modules/aws?ref=v0.1.0"
 
   name              = var.name
-  platform_registry = module.cache.platform_registry.url
+  platform_registry = var.platform_registry.url # the store replica in this region
   secret_prefix     = var.secret_prefix
   domain            = var.dns.host
   harnesses         = ["claude"]

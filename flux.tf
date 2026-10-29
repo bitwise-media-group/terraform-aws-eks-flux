@@ -314,8 +314,7 @@ module "flux_operator" {
     kms_public_key_pem = one(data.aws_kms_public_key.signing[*].public_key_pem)
   }
 
-  registry_arn                   = local.registry_arn
-  registry_is_pull_through_cache = var.platform_registry.is_pull_through_cache
+  registry_arn = local.registry_arn
 
   kustomize_patches = var.flux.kustomize_patches
   cluster_vars      = merge(var.flux.cluster_vars, local.reserved_cluster_vars)

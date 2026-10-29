@@ -1,7 +1,7 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
 
-# Every surface on: a pull-through cache of the central store, the DNS/TLS
+# Every surface on: the central store's replica in this region, the DNS/TLS
 # wiring, reserved Gateway addresses, RBAC access entries, SSO, the staging sync
 # channel, the electable platform components and one seeded application
 # (patchy) composed the way a real root composes it - the application's own
@@ -14,6 +14,7 @@
 #     ECR/S3/STS/EKS VPC endpoints nodes need to pull images and reach the API
 #   - the delegated Route53 hosted zone, with NS records added at the parent once
 #   - the artifact store (examples/artifact-store), populated by flux-containers
+#     and replicated to this example's region (its replica_regions)
 #
 # Subnets must carry the kubernetes.io/role/{internal-,}elb tags for the
 # Gateway's NLB; the cluster module adds the karpenter.sh/discovery tag itself
@@ -23,22 +24,14 @@ provider "aws" {
   region = var.region
 }
 
-# A pull-through cache in THIS account, so nodes pull from a registry beside
-# them and the store stays closed to direct reads. Its platform_registry output
-# carries is_pull_through_cache = true, which is what grants the cluster's
-# pullers the create/import permissions a cache needs on first pull.
-module "cache" {
-  source = "../../modules/registry-cache"
-
-  name = "platform"
-
-  upstream = {
-    registry_id       = var.store.registry_id
-    region            = var.store.region
-    repository_prefix = var.store.repository_prefix
+# The store's replica in THIS region (the artifact-store module's
+# platform_registries["<region>"] output), so the cluster keeps reconciling
+# while the store's primary region is down. The store's registry policy admits
+# the whole organization; nothing to apply in this account for it.
+locals {
+  platform_registry = {
+    url = "${var.store.registry_id}.dkr.ecr.${var.region}.amazonaws.com/${var.store.repository_prefix}"
   }
-
-  tags = var.tags
 }
 
 # The application, composed beside the cluster. A real root sources this
@@ -50,7 +43,7 @@ module "cache" {
 #     source = "git::https://github.com/bitwise-media-group/patchy-app-manifests.git//modules/aws?ref=v0.1.0"
 #
 #     name              = var.name
-#     platform_registry = module.cache.platform_registry.url
+#     platform_registry = local.platform_registry.url
 #     secret_prefix     = var.secret_prefix
 #     domain            = var.dns_zone_name
 #     harnesses         = ["claude"]
@@ -76,7 +69,7 @@ locals {
     ]
 
     application = {
-      url        = "oci://${module.cache.platform_registry.url}/manifests/patchy"
+      url        = "oci://${local.platform_registry.url}/manifests/patchy"
       semver     = "<1.0.0 >=0.1.0"
       timeout    = "10m"
       depends_on = ["kyverno-policies", "gateway", "secret-sync"]
@@ -109,9 +102,7 @@ module "cluster" {
     public_subnet_ids = var.network.public_subnet_ids
   }
 
-  # One line, no guessing: the cache module says where it is AND that it is a
-  # cache. Swap in module.store.platform_registry to read a store directly.
-  platform_registry = module.cache.platform_registry
+  platform_registry = local.platform_registry
 
   signed_identity = {
     manifests_subject  = var.signed_identity_subjects.manifests
@@ -233,8 +224,11 @@ module "cluster" {
 # cannot go stale mid-apply. It does require the AWS CLI on whatever runs
 # terraform.
 #
-# The ECR token is fine as a data source: those are valid for 12 hours.
-data "aws_ecr_authorization_token" "registry" {}
+# The ECR token is fine as a data source: those are valid for 12 hours. It is
+# minted for the store's registry, the replica the charts are pulled from.
+data "aws_ecr_authorization_token" "registry" {
+  registry_id = var.store.registry_id
+}
 
 provider "helm" {
   kubernetes = {
@@ -250,7 +244,7 @@ provider "helm" {
 
   registries = [
     {
-      url      = "oci://${module.cache.registry_host}"
+      url      = "oci://${split("/", local.platform_registry.url)[0]}"
       username = data.aws_ecr_authorization_token.registry.user_name
       password = data.aws_ecr_authorization_token.registry.password
     }

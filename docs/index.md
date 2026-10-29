@@ -12,5 +12,5 @@ hide:
 -->
 
 A generic EKS cluster that bootstraps flux-operator and syncs a cosign-signed platform from ECR, running Cilium in ENI
-mode as the CNI and Karpenter for workload capacity, plus the artifact store, registry cache, signing key and SSO secret
+mode as the CNI and Karpenter for workload capacity, plus the replicated artifact store, signing key and SSO secret
 modules around it.

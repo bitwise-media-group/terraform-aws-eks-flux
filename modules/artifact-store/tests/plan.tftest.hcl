@@ -52,42 +52,42 @@ run "create_on_push" {
   # all, so publishers could not push charts/images to paths that do not exist
   # yet. This single value is what makes the whole layout work.
   assert {
-    condition     = contains(aws_ecr_repository_creation_template.platform.applied_for, "CREATE_ON_PUSH")
+    condition     = contains(aws_ecr_repository_creation_template.primary["platform"].applied_for, "CREATE_ON_PUSH")
     error_message = "the creation template must apply to CREATE_ON_PUSH"
   }
 
   assert {
-    condition     = aws_ecr_repository_creation_template.platform.prefix == "platform"
+    condition     = aws_ecr_repository_creation_template.primary["platform"].prefix == "platform"
     error_message = "the template must be keyed on the same prefix everything is published beneath"
   }
 
   assert {
-    condition     = aws_ecr_repository_creation_template.platform.image_tag_mutability == "IMMUTABLE"
+    condition     = aws_ecr_repository_creation_template.primary["platform"].image_tag_mutability == "IMMUTABLE"
     error_message = "charts and images must be tag-immutable: a published tag never changes digest"
   }
 
   # The longer prefix wins, so this template alone governs every manifest image.
   assert {
-    condition     = aws_ecr_repository_creation_template.manifests.prefix == "platform/manifests"
+    condition     = aws_ecr_repository_creation_template.primary["manifests"].prefix == "platform/manifests"
     error_message = "the manifests template must be keyed on <prefix>/manifests to take precedence there"
   }
 
   assert {
-    condition     = contains(aws_ecr_repository_creation_template.manifests.applied_for, "CREATE_ON_PUSH")
+    condition     = contains(aws_ecr_repository_creation_template.primary["manifests"].applied_for, "CREATE_ON_PUSH")
     error_message = "the manifests template must apply to CREATE_ON_PUSH, or manifest pushes to new paths fail"
   }
 
   # Channel tags (staging, stable, edge) move between releases; version tags
   # must not.
   assert {
-    condition     = aws_ecr_repository_creation_template.manifests.image_tag_mutability == "IMMUTABLE_WITH_EXCLUSION"
+    condition     = aws_ecr_repository_creation_template.primary["manifests"].image_tag_mutability == "IMMUTABLE_WITH_EXCLUSION"
     error_message = "manifest images must be tag-immutable except for their channel tags"
   }
 
   assert {
     condition = (
-      toset([for f in aws_ecr_repository_creation_template.manifests.image_tag_mutability_exclusion_filter : f.filter]) == toset(["edge", "stable", "staging"])
-      && alltrue([for f in aws_ecr_repository_creation_template.manifests.image_tag_mutability_exclusion_filter : f.filter_type == "WILDCARD"])
+      toset([for f in aws_ecr_repository_creation_template.primary["manifests"].image_tag_mutability_exclusion_filter : f.filter]) == toset(["edge", "stable", "staging"])
+      && alltrue([for f in aws_ecr_repository_creation_template.primary["manifests"].image_tag_mutability_exclusion_filter : f.filter_type == "WILDCARD"])
     )
     error_message = "exactly the edge, stable and staging channel tags may move on manifest images"
   }
@@ -101,11 +101,10 @@ run "create_on_push" {
     error_message = "a creation template setting resource tags requires a role for ECR to assume"
   }
 
-  # Trusted for pull-through cache and replication too, so the same template can
-  # later serve those without a trust-policy change.
+  # The same role serves the replicas' REPLICATION templates.
   assert {
     condition = alltrue([
-      for principal in ["ecr.amazonaws.com", "pullthroughcache.ecr.amazonaws.com", "replication.ecr.amazonaws.com"] :
+      for principal in ["ecr.amazonaws.com", "replication.ecr.amazonaws.com"] :
       anytrue([
         for block in one(data.aws_iam_policy_document.creation_assume_role.statement).principals :
         contains(block.identifiers, principal)
@@ -115,32 +114,174 @@ run "create_on_push" {
   }
 }
 
-run "reads_are_org_wide" {
+run "no_replicas_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(aws_ecr_replication_configuration.platform) == 0
+    error_message = "without replica_regions the module must not claim the registry's replication configuration"
+  }
+
+  assert {
+    condition     = length(aws_ecr_repository_creation_template.replica) == 0 && length(aws_ecr_registry_policy.replica) == 0
+    error_message = "without replica_regions there are no replica templates or registry policies"
+  }
+
+  assert {
+    condition     = keys(output.platform_registries) == ["eu-west-2"]
+    error_message = "without replicas the only registry is the primary"
+  }
+}
+
+run "replicas_mirror_the_primary" {
   command = plan
 
   variables {
-    direct_pull_principals = []
+    replica_regions = ["us-east-1", "ap-southeast-2"]
   }
 
-  # One statement, no account list: the downstream account's pull-through-cache
-  # role is the actual caller, so aws:PrincipalOrgID matches it and every future
-  # member account is covered without touching this module.
+  # Repository settings are not replicated: a replica repository gets its tag
+  # mutability (and the channel-tag exclusions) only from a REPLICATION
+  # template in its own region.
+  assert {
+    condition = alltrue([
+      for region in ["us-east-1", "ap-southeast-2"] : alltrue([
+        for name in ["platform", "manifests"] : (
+          aws_ecr_repository_creation_template.replica["${region}/${name}"].region == region
+          && aws_ecr_repository_creation_template.replica["${region}/${name}"].applied_for == toset(["REPLICATION"])
+          && aws_ecr_repository_creation_template.replica["${region}/${name}"].prefix == aws_ecr_repository_creation_template.primary[name].prefix
+          && aws_ecr_repository_creation_template.replica["${region}/${name}"].image_tag_mutability == aws_ecr_repository_creation_template.primary[name].image_tag_mutability
+          && aws_ecr_repository_creation_template.replica["${region}/${name}"].lifecycle_policy == aws_ecr_repository_creation_template.primary[name].lifecycle_policy
+        )
+      ])
+    ])
+    error_message = "every replica region needs a REPLICATION copy of each primary template with the same prefix, mutability and lifecycle"
+  }
+
+  assert {
+    condition = alltrue([
+      for region in ["us-east-1", "ap-southeast-2"] :
+      toset([for f in aws_ecr_repository_creation_template.replica["${region}/manifests"].image_tag_mutability_exclusion_filter : f.filter]) == toset(["edge", "stable", "staging"])
+    ])
+    error_message = "a replica's manifest images must keep exactly the primary's movable channel tags, or a moved tag fails to replicate"
+  }
+
+  assert {
+    condition = (
+      toset([for d in one(one(aws_ecr_replication_configuration.platform).replication_configuration).rule[0].destination : d.region]) == toset(["us-east-1", "ap-southeast-2"])
+      && alltrue([for d in one(one(aws_ecr_replication_configuration.platform).replication_configuration).rule[0].destination : d.registry_id == "123456789012"])
+    )
+    error_message = "the store must replicate to exactly replica_regions, within its own account"
+  }
+
+  assert {
+    condition = (
+      one(one(one(aws_ecr_replication_configuration.platform).replication_configuration).rule[0].repository_filter).filter == "platform/"
+      && one(one(one(aws_ecr_replication_configuration.platform).replication_configuration).rule[0].repository_filter).filter_type == "PREFIX_MATCH"
+    )
+    error_message = "replication must cover exactly the <prefix>/ namespace"
+  }
+
+  assert {
+    condition = alltrue([
+      for region in ["us-east-1", "ap-southeast-2"] : (
+        aws_ecr_registry_policy.replica[region].region == region
+        && jsondecode(aws_ecr_registry_policy.replica[region].policy).Statement[0].Resource == "arn:aws:ecr:${region}:123456789012:repository/platform/*"
+        && jsondecode(aws_ecr_registry_policy.replica[region].policy).Statement[0].Condition.StringEquals["aws:PrincipalOrgID"] == "o-abcdefghij"
+      )
+    ])
+    error_message = "every replica region must grant the same org-wide read on its own repositories"
+  }
+
+  assert {
+    condition     = output.platform_registries["ap-southeast-2"].url == "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/platform"
+    error_message = "a replica's url must be its regional registry host plus the prefix, ready to pass to a cluster there"
+  }
+
+  assert {
+    condition     = output.replication_backfill_commands["us-east-1"] == "aws ecr start-replication-backfill --region eu-west-2 --registry-id 123456789012 --destination region=us-east-1,registryId=123456789012"
+    error_message = "each replica region needs a backfill command run against the primary"
+  }
+
+  # The creation role creates repositories in every region.
+  assert {
+    condition = toset(one(data.aws_iam_policy_document.creation.statement).resources) == toset([
+      for region in ["eu-west-2", "us-east-1", "ap-southeast-2"] : "arn:aws:ecr:${region}:123456789012:repository/platform/*"
+    ])
+    error_message = "the creation role must be allowed to create repositories beneath the prefix in every region"
+  }
+}
+
+run "replica_regions_reject_primary" {
+  command = plan
+
+  variables {
+    replica_regions = ["eu-west-2"]
+  }
+
+  expect_failures = [aws_ecr_replication_configuration.platform]
+}
+
+run "kms_keys_cover_every_region" {
+  command = plan
+
+  variables {
+    replica_regions = ["us-east-1"]
+    kms_key_arns = {
+      eu-west-2 = "arn:aws:kms:eu-west-2:123456789012:key/1234abcd-12ab-4bcd-8def-1234567890ab"
+    }
+  }
+
+  expect_failures = [aws_ecr_repository_creation_template.primary]
+}
+
+run "kms_keys_are_regional" {
+  command = plan
+
+  variables {
+    replica_regions = ["us-east-1"]
+    kms_key_arns = {
+      eu-west-2 = "arn:aws:kms:eu-west-2:123456789012:key/1234abcd-12ab-4bcd-8def-1234567890ab"
+      us-east-1 = "arn:aws:kms:us-east-1:123456789012:key/5678abcd-12ab-4bcd-8def-1234567890ab"
+    }
+  }
+
+  assert {
+    condition = (
+      one(aws_ecr_repository_creation_template.replica["us-east-1/manifests"].encryption_configuration).kms_key == "arn:aws:kms:us-east-1:123456789012:key/5678abcd-12ab-4bcd-8def-1234567890ab"
+      && one(aws_ecr_repository_creation_template.primary["manifests"].encryption_configuration).kms_key == "arn:aws:kms:eu-west-2:123456789012:key/1234abcd-12ab-4bcd-8def-1234567890ab"
+    )
+    error_message = "each region's templates must encrypt with that region's key"
+  }
+}
+
+run "reads_are_org_wide" {
+  command = plan
+
+  # One statement, no account list: aws:PrincipalOrgID matches every cluster's
+  # readers, and every future member account is covered without touching this
+  # module.
   assert {
     condition     = length(jsondecode(aws_ecr_registry_policy.platform.policy).Statement) == 1
-    error_message = "with no direct pull principals the registry policy is exactly the org-wide pull-through-cache grant"
+    error_message = "the registry policy is exactly the org-wide read grant"
   }
 
   assert {
     condition     = jsondecode(aws_ecr_registry_policy.platform.policy).Statement[0].Condition.StringEquals["aws:PrincipalOrgID"] == "o-abcdefghij"
-    error_message = "the pull-through-cache grant must be conditioned on the organization id, not on a per-account principal list"
+    error_message = "the read grant must be conditioned on the organization id, not on a per-account principal list"
   }
 
+  # Pull, plus the tag listing the flux ECRArtifactTag providers resolve
+  # application versions with - and nothing that writes.
   assert {
-    condition = contains(
-      jsondecode(aws_ecr_registry_policy.platform.policy).Statement[0].Action,
-      "ecr:BatchImportUpstreamImage",
-    )
-    error_message = "a pull-through cache needs BatchImportUpstreamImage on the upstream, not just read"
+    condition = toset(jsondecode(aws_ecr_registry_policy.platform.policy).Statement[0].Action) == toset([
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:DescribeImages",
+      "ecr:ListImages",
+    ])
+    error_message = "the org-wide grant is read and list only"
   }
 
   assert {
@@ -160,7 +301,7 @@ run "reads_narrow_to_accounts" {
   # ANDed with it under the same StringEquals, never a replacement for it.
   assert {
     condition     = length(jsondecode(aws_ecr_registry_policy.platform.policy).Statement) == 1
-    error_message = "narrowing to accounts must not add a statement beside the pull-through-cache grant"
+    error_message = "narrowing to accounts must not add a statement beside the read grant"
   }
 
   assert {
@@ -170,7 +311,7 @@ run "reads_narrow_to_accounts" {
 
   assert {
     condition     = jsondecode(aws_ecr_registry_policy.platform.policy).Statement[0].Condition.StringEquals["aws:PrincipalAccount"] == ["111122223333", "999988887777"]
-    error_message = "account_ids must become a sorted aws:PrincipalAccount condition on the pull-through-cache grant"
+    error_message = "account_ids must become a sorted aws:PrincipalAccount condition on the read grant"
   }
 }
 
@@ -182,19 +323,6 @@ run "account_ids_must_be_account_ids" {
   }
 
   expect_failures = [var.account_ids]
-}
-
-run "direct_pull_is_opt_in" {
-  command = plan
-
-  variables {
-    direct_pull_principals = ["arn:aws:iam::999988887777:role/patchy-x-nodes"]
-  }
-
-  assert {
-    condition     = length(jsondecode(aws_ecr_registry_policy.platform.policy).Statement) == 2
-    error_message = "naming direct pull principals must add a second statement beside the org-wide one"
-  }
 }
 
 run "publisher_trust_pins_numeric_ids" {
@@ -328,13 +456,8 @@ run "platform_publisher_must_be_declared" {
   expect_failures = [var.github]
 }
 
-run "registry_output_is_not_a_cache" {
+run "registry_output_is_cluster_ready" {
   command = plan
-
-  assert {
-    condition     = output.platform_registry.is_pull_through_cache == false
-    error_message = "this IS the store, so a cluster wired here reads it directly and must appear in direct_pull_principals"
-  }
 
   assert {
     condition     = output.platform_registry.url == "123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform"

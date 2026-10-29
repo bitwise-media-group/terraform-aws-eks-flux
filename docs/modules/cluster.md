@@ -9,7 +9,7 @@ module "cluster" {
 
   name              = "platform-x"
   network           = { vpc_id = "vpc-…", node_subnet_ids = ["subnet-…", "subnet-…"] }
-  platform_registry = module.cache.platform_registry
+  platform_registry = module.store.platform_registries["<this region>"] # the store replica beside the cluster
   signed_identity = {
     manifests_subject  = "…"
     containers_subject = "…"

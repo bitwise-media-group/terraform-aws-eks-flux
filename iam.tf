@@ -297,25 +297,6 @@ data "aws_iam_policy_document" "registry_read" {
 
     resources = [local.registry_arn]
   }
-
-  # A pull-through cache materialises a repository on the FIRST pull of each
-  # image, so every puller needs create/import as well as read.
-  dynamic "statement" {
-    for_each = var.platform_registry.is_pull_through_cache ? ["true"] : []
-
-    content {
-      sid    = "CacheFill"
-      effect = "Allow"
-
-      actions = [
-        "ecr:CreateRepository",
-        "ecr:BatchImportUpstreamImage",
-        "ecr:GetImageCopyStatus",
-      ]
-
-      resources = [local.registry_arn]
-    }
-  }
 }
 
 # kyverno's image policy verifies signatures at admission/report time: always
@@ -399,23 +380,4 @@ resource "aws_eks_pod_identity_association" "workload" {
   # Associations are accepted before the agent exists, but nothing can resolve
   # credentials until it does - ordering them keeps a fresh apply honest.
   depends_on = [aws_eks_addon.pod_identity_agent]
-}
-
-locals {
-  # Every identity that reads the platform registry. When platform_registry is
-  # a pull-through cache in this account the grants above are sufficient;
-  # when it points straight at a central store, these are the principals the
-  # store's direct_pull_principals must admit.
-  registry_reader_principals = concat(
-    [
-      aws_iam_role.nodes.arn,
-      aws_iam_role.karpenter_node.arn,
-    ],
-    [for role in aws_iam_role.nodes_windows : role.arn],
-    [for role in module.flux_operator.registry_reader_roles : role],
-    [
-      for service_account in var.workload_identity.kyverno.service_accounts :
-      aws_iam_role.workload["kyverno-${service_account}"].arn
-    ],
-  )
 }

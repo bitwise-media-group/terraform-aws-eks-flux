@@ -54,9 +54,10 @@ Four kinds of repo make a deployment:
   `<prefix>/images/<path>` or `<prefix>/manifests/<name>` and ECR creates each repository with the template's lifecycle
   policy, tag mutability, encryption and tags. Push is scoped per publisher: the platform repo owns `manifests/*`, an
   application repo owns exactly `manifests/<app>`.
-- **Reads are org-wide, not per-account.** The store admits only the ECR pull-through cache service, matched on
-  `aws:PrincipalOrgID`, so onboarding a cluster account means applying `modules/registry-cache` there - never editing
-  the store. `direct_pull_principals` is the escape hatch for clusters allowed to read it straight.
+- **Regional replicas, org-wide reads.** Publishers push to the store's primary region and ECR replication copies
+  every push to each of its `replica_regions`; a cluster reads the replica in its own region, so a primary-region
+  outage never stops it reconciling. Reads are granted to the whole organization (`aws:PrincipalOrgID`) in every
+  region, so onboarding a cluster account never means editing the store - only a new region does.
 - **Cosign everywhere - keyless by default, KMS as the alternative.** Keyless: artifacts are signed by GitHub Actions
   OIDC identities (Fulcio/Rekor), the generated `flux-system` OCIRepository verifies the platform entrypoint via
   `matchOIDCIdentity`, every component and application `OCIRepository` and the Kyverno policy verify the same way, and
@@ -100,25 +101,18 @@ module exists to hold it:
 
 ## Choosing a registry
 
-`platform_registry` takes a `{ url, is_pull_through_cache }` object, and both registry modules emit exactly that shape -
-so wire it from a module output rather than composing it by hand:
+`platform_registry` takes a `{ url }` object: the artifact store's replica in the cluster's own region. Wire it from the
+store's `platform_registries` output, keyed by region, rather than composing it by hand:
 
 ```hcl
-module "cache" {
-  source   = ".../modules/registry-cache"
-  upstream = { registry_id = "…", region = "eu-west-2" }
-}
-
 module "cluster" {
   source            = ".../terraform-aws-eks-flux"
-  platform_registry = module.cache.platform_registry # is_pull_through_cache = true
+  platform_registry = module.store.platform_registries["eu-west-2"]
 }
 ```
 
-The flag is not cosmetic: a cache materialises each repository on its **first** pull, so a cluster wired to one without
-`ecr:CreateRepository` + `ecr:BatchImportUpstreamImage` fails on its first image. Passing
-`module.store.platform_registry` instead reads the store directly (`is_pull_through_cache = false`) and additionally
-requires that store to admit the cluster's `registry_reader_principals`.
+The region must be the store's primary or one of its `replica_regions` - reading another region's registry would
+reintroduce the cross-region dependency the replicas exist to remove.
 
 ## Bootstrap sequence
 
@@ -126,7 +120,8 @@ requires that store to admit the cluster's `registry_reader_principals`.
    NAT or the ECR/S3/STS/EKS VPC endpoints, the delegated Route53 zone, and the GitHub Actions OIDC provider. Subnets
    need the `kubernetes.io/role/{internal-,}elb` tags; the cluster module adds `karpenter.sh/discovery` itself.
 2. **Artifact store** (`examples/artifact-store`) in the platform account, with one entry in
-   `github.manifest_publishers` per manifest-publishing repo. Feed its outputs to the publishing repos as the
+   `github.manifest_publishers` per manifest-publishing repo and one `replica_regions` entry per region clusters run in
+   outside the primary. Feed its outputs to the publishing repos as the
    `AWS_CHART_PUBLISHER_ROLE` (flux-containers), `AWS_MANIFEST_PUBLISHER_ROLE` (one value per manifest repo, from
    `manifest_publishers`), `AWS_PLATFORM_REGISTRY` and `AWS_REGION` Actions variables.
 3. **flux-containers**: publish every chart + image - including `cilium`, `karpenter` and, for `arc`, the runner
@@ -134,8 +129,8 @@ requires that store to admit the cluster's `registry_reader_principals`.
 4. **flux-manifests**: cut a release; its publish workflow pushes every component image, then the platform entrypoint
    (`manifests/platform`), and moves the `staging` tag on each.
 5. **Application images**: each application repo publishes `manifests/<app>` the same way.
-6. **Registry cache** (`examples/registry-cache`) in the cluster's account, then the **cluster** (`examples/complete` is
-   the shape, applications composed in). One apply bootstraps Cilium, flux-operator, the platform and the seeds.
+6. **The cluster** (`examples/complete` is the shape, applications composed in), reading the store's replica in its
+   region. One apply bootstraps Cilium, flux-operator, the platform and the seeds.
 
 ## The terraform ↔ flux contract
 
@@ -233,7 +228,7 @@ module "patchy" {
   source = "git::https://github.com/bitwise-media-group/patchy-app-manifests.git//modules/aws?ref=v0.1.0"
 
   name              = var.name
-  platform_registry = module.cache.platform_registry.url
+  platform_registry = var.platform_registry.url # the store replica in this region
   secret_prefix     = var.secret_prefix
   domain            = var.dns.host
   harnesses         = ["claude"]
@@ -359,11 +354,11 @@ live in the platform README.
 - **`cert-manager` and `external-dns` stay flux-managed** despite being available as community add-ons: those are
   community tier (AWS supports only lifecycle operations), and taking them as add-ons would pull images from AWS's
   registry, breaking the "clusters never pull from a public registry" invariant and the Kyverno policy enforcing it.
-- **Pull-through cache coverage is unvalidated for helm charts and cosign signatures.** ECR→ECR pull-through is a
-  manifest/blob copy, so OCI chart artifacts and `sha256-<digest>.sig` tags should pass through intact - but the whole
-  verification chain depends on it, so confirm both on first apply.
-- **`aws_ecr_registry_policy` is a per-account, per-region singleton.** `modules/artifact-store` owns it; an account
-  using registry policies for anything else must merge those statements via `additional_registry_statements`.
+- **Replication carries only new pushes.** A region added to `replica_regions` starts empty; run its
+  `replication_backfill_commands` entry once before pointing a cluster at it.
+- **`aws_ecr_registry_policy` and `aws_ecr_replication_configuration` are registry singletons.**
+  `modules/artifact-store` owns them (the policy in every region it manages); an account using registry policies for
+  anything else must merge those statements via `additional_registry_statements`.
 
 ## Migrating from 4.x
 
@@ -525,7 +520,7 @@ shells out to `aws eks get-token` (see the caveat above).
 | ---- | ----------- | ---- | ------- | :------: |
 | name | Cluster name. Also prefixes the IAM roles, the Karpenter discovery tag and the default gateway EIP names. | `string` | n/a | yes |
 | network | Existing VPC wiring, created upstream and never owned here.<br/>node\_subnet\_ids are the private subnets nodes launch into; pod\_subnet\_ids narrows the subnets Cilium<br/>allocates pod ENIs from (defaults to the node subnets); public\_subnet\_ids carry the public Gateway's NLB and its<br/>reserved EIPs (a private Gateway spans the internal subnets instead, so they may be omitted then);<br/>internal\_subnet\_ids moves a private Gateway's internal NLB off the node subnets - onto subnets routable from<br/>outside the VPC, say, where the node subnets are not (defaults to the node subnets).<br/>manage\_discovery\_tags lets this module apply the karpenter.sh/discovery tag to the node and public subnets -<br/>turn it off where the VPC owner tags them instead. The internal subnets are never tagged: the Gateway names<br/>them explicitly, and an untagged subnet is one Karpenter never launches nodes into.<br/>security\_group\_ids attach to the control-plane ENIs alongside the EKS-managed cluster security group - use<br/>them for caller-owned rules (e.g. API access from a bastion or VPN range).<br/>restrict\_default\_security\_group revokes the allow-all egress rules (0.0.0.0/0 and ::/0) on the EKS-managed<br/>cluster security group and pins the documented minimum self-rules there instead. The revoke runs the AWS CLI<br/>on the apply host (it must be installed and authenticated as the provider identity, with<br/>ec2:DescribeSecurityGroupRules and ec2:RevokeSecurityGroupEgress), fires once per cluster after bootstrap,<br/>and is drift-blind: a manually re-added rule is not re-revoked, and toggling back off restores nothing.<br/>Nodes wear that group, so only enable this where node egress (ECR and S3 pulls, the EKS and SSM APIs)<br/>arrives through VPC endpoints or caller-added rules. | <pre>object({<br/>    vpc_id                          = string<br/>    node_subnet_ids                 = set(string)<br/>    pod_subnet_ids                  = optional(set(string), [])<br/>    public_subnet_ids               = optional(set(string), [])<br/>    internal_subnet_ids             = optional(set(string), [])<br/>    manage_discovery_tags           = optional(bool, true)<br/>    security_group_ids              = optional(set(string), [])<br/>    restrict_default_security_group = optional(bool, false)<br/>  })</pre> | n/a | yes |
-| platform\_registry | Where the cluster consumes charts, images and the manifests artifact from. Pass a module output rather than<br/>composing this by hand - `module.cache.platform_registry` (a pull-through cache in the cluster's own account, the<br/>default posture) or `module.store.platform_registry` (reading a central store directly, which additionally requires<br/>the store to admit this cluster's registry\_reader\_principals). Both modules emit exactly this shape, so the<br/>is\_pull\_through\_cache flag is never guessed.<br/><br/>url is <account>.dkr.ecr.<region>.amazonaws.com/<prefix>. is\_pull\_through\_cache adds ecr:CreateRepository and<br/>ecr:BatchImportUpstreamImage to every puller's grant - a cache materialises each repository on its FIRST pull, so<br/>without them the first image pull of a fresh cluster fails. | <pre>object({<br/>    url                   = string<br/>    is_pull_through_cache = bool<br/>  })</pre> | n/a | yes |
+| platform\_registry | Where the cluster consumes charts, images and the manifests artifact from: the artifact store's replica in this<br/>cluster's region, so the cluster keeps reconciling while the store's primary region is down. Pass the<br/>artifact-store module's platform\_registries["<region>"] output rather than composing it by hand.<br/><br/>url is <account>.dkr.ecr.<region>.amazonaws.com/<prefix>. The store's registry policy admits the whole<br/>organization, so the cluster's pullers need only their own read grants on it. | <pre>object({<br/>    url = string<br/>  })</pre> | n/a | yes |
 | signed\_identity | Cosign verification identity for every platform artifact - exactly one of two modes.<br/><br/>KEYLESS (subjects set, kms\_key\_arn null): Go regexps matched against the Fulcio certificate of GitHub Actions OIDC<br/>signatures. The artifact-store module's signed\_identity\_subjects output provides the subjects; the issuer default<br/>matches GitHub Actions. Cloud agnostic - the signing identities are GitHub's, not AWS's, so the same values serve<br/>clusters on any cloud.<br/><br/>KMS (kms\_key\_arn set, subjects null): the publish workflows sign with an asymmetric SIGN\_VERIFY KMS key<br/>(cosign sign --key awskms:///<arn>; the artifact-store module's signing\_kms\_key\_arn grants the publishers kms:Sign).<br/>The key's public half is distributed to the cluster as the flux-system cosign-pub Secret for the bootstrap verify<br/>patch, the ARN is published as the SIGNED\_IDENTITY\_KMS\_KEY cluster var, and kyverno's controllers get<br/>kms:GetPublicKey / kms:Verify to resolve it at admission time. | <pre>object({<br/>    issuer             = optional(string, "^https://token\\.actions\\.githubusercontent\\.com$")<br/>    manifests_subject  = optional(string)<br/>    containers_subject = optional(string)<br/>    kms_key_arn        = optional(string)<br/>  })</pre> | n/a | yes |
 | addons | EKS add-ons. Everything AWS offers managed is taken managed, and only the rest reaches the cluster through flux.<br/>vpc-cni and kube-proxy are absent by construction - Cilium replaces both, and<br/>bootstrap\_self\_managed\_addons is off so EKS never installs them.<br/><br/>aws-secrets-store-csi-driver-provider bundles the Secrets Store CSI driver alongside the AWS provider, so only the<br/>secrets-store-sync-controller (the SecretSync CRD) remains a flux component. metrics-server is a COMMUNITY add-on:<br/>AWS supports its lifecycle, not the software. cert-manager and external-dns are community add-ons too but stay<br/>flux-managed on purpose - as add-ons they would pull images from AWS's registry, breaking the invariant that<br/>clusters never pull from a public registry and the Kyverno policy that enforces it. | <pre>map(object({<br/>    enabled              = optional(bool, true)<br/>    version              = optional(string)<br/>    configuration_values = optional(string)<br/>  }))</pre> | <pre>{<br/>  "aws-ebs-csi-driver": {},<br/>  "aws-secrets-store-csi-driver-provider": {},<br/>  "coredns": {},<br/>  "eks-node-monitoring-agent": {},<br/>  "eks-pod-identity-agent": {},<br/>  "metrics-server": {},<br/>  "snapshot-controller": {}<br/>}</pre> | no |
 | application\_vars | Per-application substitution values, keyed by application short name: each entry is rendered as the <key>-vars<br/>ConfigMap in flux-system (terraform-reconciled through cluster-inputs, so changes flow through applies), which the<br/>application's Kustomization substitutes from beside cluster-vars. Keys are top-level rather than nested in<br/>applications so a composite image's inner applications can each have their own ConfigMap. Keys must be<br/>SCREAMING\_SNAKE\_CASE, matching the substitution syntax; an application's own module typically emits this map. | `map(map(string))` | `{}` | no |
@@ -570,9 +565,8 @@ shells out to `aws eks get-token` (see the caveat above).
 | name | Cluster name. |
 | node\_groups | Each var.node\_groups entry's actual node group name and ARN (the names carry generated suffixes). |
 | node\_iam\_role | The IAM role shared by the Linux managed node groups (name and ARN); Windows node groups and Karpenter nodes use their own separate roles. |
-| platform\_registry | The platform registry this cluster consumes from (pass-through of var.platform\_registry): its url and whether it is<br/>a pull-through cache. |
+| platform\_registry | The platform registry this cluster consumes from (pass-through of var.platform\_registry): the artifact store's<br/>replica in this cluster's region. |
 | rbac | Cluster RBAC subjects (null unless rbac.enabled): each role's IAM principal (null when the role is OIDC-only) and<br/>the Kubernetes group it maps onto, published as the RBAC\_GROUP\_* cluster vars flux-manifests binds against. |
-| registry\_reader\_principals | Every identity that reads the platform registry (node roles, flux controllers, kyverno controllers). Covered<br/>automatically when platform\_registry is a pull-through cache in this account; feed these to the artifact-store<br/>module's direct\_pull\_principals when the cluster reads a central store directly instead. |
 | secret\_prefix | The normalized Secrets Manager name prefix (var.secret\_prefix, or the empty string), published as SECRET\_PREFIX.<br/>Application modules and roots compose container names as <prefix><name> from this rather than re-deriving<br/>the rule. |
 | secrets\_role\_prefix | The ARN prefix of the podless secret-sync reader roles (published as SECRETS\_ROLE\_PREFIX): a<br/>workload\_identity.secret\_readers pair <ns>/<sa> assumes <prefix><ns>-<sa>. Exported so an application's<br/>out-of-cluster wiring can name its reader roles without importing the naming rule. |
 | sso | SSO facts this cluster owns (null unless sso.enabled): the dex issuer, the platform's static clients (as<br/>published in DEX\_CLIENTS; application clients are DexClient objects and never appear here), the generated<br/>dex-client-<id> secret names for the confidential ones and the composed config documents. The out-of-band dex-<id>-<field> connector containers live in<br/>modules/sso-secrets (a durable root), fed the same sso value. |

@@ -14,8 +14,3 @@ output "cluster_vars" {
   description = "The exact terraform -> flux contract this cluster publishes."
   value       = module.cluster.flux.cluster_vars
 }
-
-output "registry_reader_principals" {
-  description = "Feed these to the artifact-store module's direct_pull_principals when this cluster reads a central store directly rather than through a cache."
-  value       = module.cluster.registry_reader_principals
-}

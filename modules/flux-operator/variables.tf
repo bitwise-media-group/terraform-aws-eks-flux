@@ -147,16 +147,6 @@ variable "registry_arn" {
   nullable    = false
 }
 
-variable "registry_is_pull_through_cache" {
-  description = <<-EOT
-    Whether the platform registry is a pull-through cache. When set, the controllers also get ecr:CreateRepository and
-    ecr:BatchImportUpstreamImage on the prefix - the first pull of any artifact is what materialises its repository.
-  EOT
-  type        = bool
-  nullable    = false
-  default     = true
-}
-
 variable "kustomize_patches" {
   description = <<-EOT
     Extra kustomize patches applied to the generated Flux instance objects, on top of the built-in controller

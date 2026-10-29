@@ -10,7 +10,7 @@ flowchart TB
     s3["3 · flux-containers<br/>charts + images"]
     s4["4 · flux-manifests<br/>components + platform entrypoint"]
     s5["5 · Application images<br/>manifests/&lt;app&gt;"]
-    s6["6 · Registry cache + cluster<br/>examples/registry-cache · examples/complete"]
+    s6["6 · Cluster<br/>examples/complete"]
     s1 --> s2 --> s3 --> s4 --> s5 --> s6
 ```
 
@@ -24,18 +24,19 @@ them.
 ## 2. The artifact store
 
 Apply [`examples/artifact-store`](examples.md#artifact-store) in the platform account. Add one entry to
-`github.manifest_publishers` for each repo that publishes manifests: the platform repo, and each application repo.
+`github.manifest_publishers` for each repo that publishes manifests: the platform repo, and each application repo. Add
+each region clusters will run in, other than the store's own, to `replica_regions`.
 
 Then pass the example's outputs to the publishing repos as GitHub Actions variables:
 
-| Actions variable              | Set on                        | From the example's output                 |
-| ----------------------------- | ----------------------------- | ----------------------------------------- |
-| `AWS_CHART_PUBLISHER_ROLE`    | flux-containers               | `publishers.chart`                        |
-| `AWS_MANIFEST_PUBLISHER_ROLE` | each manifest-publishing repo | `publishers.manifests["<repo>"]`          |
-| `AWS_PLATFORM_REGISTRY`       | every publishing repo         | `platform_registry.url` (host and prefix) |
-| `AWS_REGION`                  | every publishing repo         | the store's region                        |
+| Actions variable              | Set on                        | From the example's output                                       |
+| ----------------------------- | ----------------------------- | --------------------------------------------------------------- |
+| `AWS_CHART_PUBLISHER_ROLE`    | flux-containers               | `publishers.chart`                                              |
+| `AWS_MANIFEST_PUBLISHER_ROLE` | each manifest-publishing repo | `publishers.manifests["<repo>"]`                                |
+| `AWS_PLATFORM_REGISTRY`       | every publishing repo         | `platform_registries["<primary region>"].url` (host and prefix) |
+| `AWS_REGION`                  | every publishing repo         | the store's primary region                                      |
 
-Keep `registry_id` too. Every cluster account's registry cache points at it.
+Keep `platform_registries` too. Each cluster takes the entry for its own region.
 
 !!! warning "Set each publisher's `repository_id`"
 
@@ -58,9 +59,9 @@ Cut a flux-manifests release. Its publish workflow pushes every component image,
 
 Each application repo publishes `oci://<registry>/manifests/<app>` the same way, under its own publisher role.
 
-## 6. The registry cache and the cluster
+## 6. The cluster
 
-In the cluster's account, apply [`examples/registry-cache`](examples.md#registry-cache) first. Then apply the cluster.
+In the cluster's account, apply the cluster with `platform_registry` set to the store's replica in its region.
 [`examples/complete`](examples.md#complete) shows the full shape, with an application composed in. That one apply
 bootstraps Cilium, flux-operator, the platform and the application seeds.
 [Bootstrap order](../concepts/bootstrap-order.md) describes what happens inside it.
@@ -75,5 +76,9 @@ Two things land in a second apply:
 
 ## Onboarding another cluster account
 
-You don't need to touch the store. Its registry policy admits every pull-through cache in the organization. In the new
-account, apply `examples/registry-cache`, then the cluster.
+You don't need to touch the store. Its registry policy admits every account in the organization, in every region. In the
+new account, apply the cluster.
+
+A cluster in a **new region** does need a store change: add the region to `replica_regions`, apply, then run that
+region's `replication_backfill_commands` entry once. Replication only carries pushes made after the region is added, so
+the backfill is what copies everything the store already holds.

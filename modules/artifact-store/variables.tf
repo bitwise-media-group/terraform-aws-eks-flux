@@ -32,9 +32,9 @@ variable "repository_prefix" {
 
 variable "organization_id" {
   description = <<-EOT
-    AWS Organizations id (o-xxxxxxxxxx). Every account in the organization may pull through an ECR pull-through cache,
+    AWS Organizations id (o-xxxxxxxxxx). Every account in the organization may read the store and its replicas,
     matched by aws:PrincipalOrgID rather than an account list - so onboarding a new cluster account needs no change
-    here. Narrow it with organization_paths if the whole org is too broad.
+    here. Narrow it with organization_paths or account_ids if the whole org is too broad.
   EOT
   type        = string
   nullable    = false
@@ -47,7 +47,7 @@ variable "organization_id" {
 
 variable "organization_paths" {
   description = <<-EOT
-    Optional aws:PrincipalOrgPaths patterns narrowing the pull-through grant to particular organizational units, e.g.
+    Optional aws:PrincipalOrgPaths patterns narrowing the read grant to particular organizational units, e.g.
     ["o-abc123/r-root/ou-workloads/*"]. Empty admits the whole organization.
   EOT
   type        = list(string)
@@ -57,8 +57,8 @@ variable "organization_paths" {
 
 variable "account_ids" {
   description = <<-EOT
-    Optional aws:PrincipalAccount ids narrowing the pull-through grant to particular member accounts, for a store only
-    a known set of accounts should cache - onboarding another one then means adding it here. Empty admits the whole
+    Optional aws:PrincipalAccount ids narrowing the read grant to particular member accounts, for a store only a known
+    set of accounts should read - onboarding another one then means adding it here. Empty admits the whole
     organization (or organization_paths).
   EOT
   type        = set(string)
@@ -71,22 +71,35 @@ variable "account_ids" {
   }
 }
 
-variable "direct_pull_principals" {
+variable "replica_regions" {
   description = <<-EOT
-    IAM principals allowed to pull from the store DIRECTLY rather than through a pull-through cache - the escape hatch
-    for clusters the platform team lets read it straight. Feed a cluster module's registry_reader_principals output
-    through here. Content security is cosign verification, not read denial, so coarse principals are acceptable.
+    Regions, in this same account, the store is replicated to - one per region clusters run in outside the primary
+    (the region this module is applied in). Every push, channel-tag moves included, is copied to each, and a cluster
+    reads the replica in its own region (the platform_registries output), so it keeps reconciling while the primary
+    region is down. Each replica gets the same creation templates (as REPLICATION templates), registry policy and
+    scanning. Only pushes made after a region is added replicate: run that region's
+    replication_backfill_commands entry once to copy what is already in the store.
   EOT
-  type        = list(string)
+  type        = set(string)
   nullable    = false
   default     = []
+
+  validation {
+    condition     = length(var.replica_regions) <= 25
+    error_message = "ECR replication supports at most 25 destinations."
+  }
+
+  validation {
+    condition     = alltrue([for region in var.replica_regions : can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]$", region))])
+    error_message = "replica_regions must be AWS region names (e.g. eu-west-2)."
+  }
 }
 
 variable "additional_registry_statements" {
   description = <<-EOT
-    Extra IAM statements merged into the ECR registry policy. ECR allows exactly one registry policy per account per
-    region and this module owns it, so an account using registry policies for anything else must pass those statements
-    here rather than declaring a second resource.
+    Extra IAM statements merged into the ECR registry policy of every region (the primary and each replica). ECR
+    allows exactly one registry policy per account per region and this module owns it, so an account using registry
+    policies for anything else must pass those statements here rather than declaring a second resource.
   EOT
   type        = list(any)
   nullable    = false
@@ -170,11 +183,20 @@ variable "github_oidc_thumbprints" {
   default     = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
 }
 
-variable "kms_key_arn" {
-  description = "Customer-managed KMS key for repository encryption; null uses ECR's AES256 default."
-  type        = string
-  nullable    = true
-  default     = null
+variable "kms_key_arns" {
+  description = <<-EOT
+    Customer-managed KMS keys for repository encryption, keyed by region. KMS keys are regional, so when set this must
+    hold one for the primary region and one for every replica region (the replicas of a multi-region key work). Empty
+    uses ECR's AES256 default everywhere.
+  EOT
+  type        = map(string)
+  nullable    = false
+  default     = {}
+
+  validation {
+    condition     = alltrue([for arn in values(var.kms_key_arns) : can(regex("^arn:aws[a-z-]*:kms:", arn))])
+    error_message = "kms_key_arns values must be KMS key ARNs."
+  }
 }
 
 variable "signing_kms_key_arn" {

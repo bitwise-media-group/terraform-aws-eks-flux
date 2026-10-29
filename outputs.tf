@@ -82,8 +82,8 @@ output "cilium" {
 
 output "platform_registry" {
   description = <<-EOT
-    The platform registry this cluster consumes from (pass-through of var.platform_registry): its url and whether it is
-    a pull-through cache.
+    The platform registry this cluster consumes from (pass-through of var.platform_registry): the artifact store's
+    replica in this cluster's region.
   EOT
   value       = var.platform_registry
 }
@@ -198,15 +198,6 @@ output "workload_roles" {
     access (a bucket policy, a cross-account trust).
   EOT
   value       = { for key, role in aws_iam_role.workload : key => role.arn }
-}
-
-output "registry_reader_principals" {
-  description = <<-EOT
-    Every identity that reads the platform registry (node roles, flux controllers, kyverno controllers). Covered
-    automatically when platform_registry is a pull-through cache in this account; feed these to the artifact-store
-    module's direct_pull_principals when the cluster reads a central store directly instead.
-  EOT
-  value       = local.registry_reader_principals
 }
 
 output "sso" {

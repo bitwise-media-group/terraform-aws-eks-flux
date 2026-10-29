@@ -53,8 +53,7 @@ The **registry** decides, never the cloud:
 
 `source-controller` pulls the sync artifact and every chart `OCIRepository`. `flux-operator` lists chart tags for
 `ECRArtifactTag` input providers. Both get Pod Identity roles scoped to the platform registry prefix, never the whole
-registry. When the registry is a pull-through cache, they also get `ecr:CreateRepository` and
-`ecr:BatchImportUpstreamImage`, because a cache creates each repository on its first pull.
+registry.
 
 ### Placement
 

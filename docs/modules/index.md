@@ -1,13 +1,12 @@
 # Modules
 
-The repo publishes one root module (the cluster) and seven submodules. Five of the submodules are building blocks you
-call from your own roots. The other two are internal to the cluster module.
+The repo publishes one root module (the cluster) and six submodules. Four of the submodules are building blocks you call
+from your own roots. The other two are internal to the cluster module.
 
 | Module                                | Call it from                   | Purpose                                                                            |
 | ------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------- |
 | [cluster (root)](cluster.md)          | a disposable cluster root      | EKS, Cilium, Karpenter IAM, add-ons, workload identity, SSO and the flux bootstrap |
-| [artifact-store](artifact-store.md)   | the platform account, once     | The central ECR prefix and its GitHub Actions publishers                           |
-| [registry-cache](registry-cache.md)   | each cluster account           | A pull-through cache of the store, beside the nodes                                |
+| [artifact-store](artifact-store.md)   | the platform account, once     | The central ECR prefix, its regional replicas and its GitHub Actions publishers    |
 | [kms-signing-key](kms-signing-key.md) | a durable root (KMS mode only) | The asymmetric key cosign signs with                                               |
 | [sso-secrets](sso-secrets.md)         | a durable root (SSO only)      | Secrets Manager containers for the dex connector's credentials                     |
 | [application](application.md)         | an application's own root      | One application published to an existing cluster, with its vars and identities     |
@@ -24,8 +23,8 @@ module "cluster" {
   # ...
 }
 
-module "cache" {
-  source = "git::https://github.com/bitwise-media-group/terraform-aws-eks-flux.git//modules/registry-cache?ref=vX.Y.Z"
+module "store" {
+  source = "git::https://github.com/bitwise-media-group/terraform-aws-eks-flux.git//modules/artifact-store?ref=vX.Y.Z"
   # ...
 }
 ```
@@ -43,13 +42,11 @@ flowchart LR
         zone["Route53 zone, VPC<br/>(upstream)"]
     end
     subgraph disposable["cluster root (destroy / recreate freely)"]
-        cache["registry-cache"]
         cluster["cluster"]
     end
     key -->|key_arn| store
     key -->|kms_key_arn| cluster
-    store -->|registry_id| cache
-    cache -->|platform_registry| cluster
+    store -->|"platform_registries[region]"| cluster
     sso -. "same sso value" .- cluster
     zone --> cluster
 ```

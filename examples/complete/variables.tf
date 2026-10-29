@@ -23,10 +23,9 @@ variable "network" {
 }
 
 variable "store" {
-  description = "The central artifact store this cluster's pull-through cache fills from (the artifact-store module's registry_id / repository_prefix outputs, plus its region)."
+  description = "The central artifact store (the artifact-store module's registry_id / repository_prefix outputs). It must replicate to this example's region (its replica_regions), or be applied in it."
   type = object({
     registry_id       = string
-    region            = string
     repository_prefix = optional(string, "platform")
   })
 }

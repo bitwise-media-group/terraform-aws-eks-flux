@@ -12,8 +12,8 @@ about any particular application.
 - **Karpenter for workload capacity**, next to a small always-on _system_ node group for the platform controllers.
 - **A flux bootstrap.** Terraform installs flux-operator and one `FluxInstance`, which syncs the platform entrypoint
   image. It also seeds each application image.
-- **A supply chain to feed it.** A central ECR artifact store that publishers push to, a pull-through cache in each
-  cluster account, and cosign verification everywhere (keyless by default, or KMS).
+- **A supply chain to feed it.** A central ECR artifact store that publishers push to, replicated to every region
+  clusters run in, and cosign verification everywhere (keyless by default, or KMS).
 - **Generic inputs for applications.** An application's own Terraform module emits IAM grants, secret readers, dex
   clients and substitution vars. Your root passes those into the cluster module's generic inputs.
 
@@ -35,14 +35,14 @@ flowchart LR
     fm["flux-manifests<br/>platform + components"] -->|push, keyless-sign| store
     app["application repo<br/>manifests/&lt;app&gt;"] -->|push, keyless-sign| store
     subgraph platform["platform account"]
-        store[("artifact-store<br/>ECR prefix")]
+        store[("artifact-store<br/>primary region")]
+        replica[("artifact-store<br/>replica region")]
     end
     subgraph cluster_acct["cluster account"]
-        cache[("registry-cache<br/>pull-through")]
         eks["EKS cluster<br/>Cilium · Karpenter · Flux"]
     end
-    store -->|org-wide pull-through| cache
-    cache --> eks
+    store -->|ECR replication| replica
+    replica -->|org-wide read| eks
 ```
 
 ## The modules
@@ -50,8 +50,7 @@ flowchart LR
 | Module                                           | Where it's applied                         | What it does                                                        |
 | ------------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------- |
 | [cluster (root)](../modules/cluster.md)          | Each cluster account, in a disposable root | The EKS cluster, Cilium, Karpenter IAM, add-ons and flux bootstrap. |
-| [artifact-store](../modules/artifact-store.md)   | The platform account, once                 | The central ECR prefix and the GitHub Actions publisher roles.      |
-| [registry-cache](../modules/registry-cache.md)   | Each cluster account                       | A pull-through cache of the store, beside the nodes.                |
+| [artifact-store](../modules/artifact-store.md)   | The platform account, once                 | The central ECR prefix, its regional replicas and the publishers.   |
 | [kms-signing-key](../modules/kms-signing-key.md) | A durable root (only in KMS signing mode)  | An asymmetric KMS key for cosign.                                   |
 | [sso-secrets](../modules/sso-secrets.md)         | A durable root (only when SSO is enabled)  | The Secrets Manager containers for the dex connector's credentials. |
 | [flux-operator](../modules/flux-operator.md)     | Internal, called by the root module        | The flux bootstrap chain of helm releases.                          |

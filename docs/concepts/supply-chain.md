@@ -47,52 +47,46 @@ is set, its subject falls back to the name-only form, which such a repo never pr
 
 ### Who can pull
 
-Nothing, by default, except **the ECR pull-through cache service, organization-wide**, matched on `aws:PrincipalOrgID`.
-A new cluster account onboards by applying [registry-cache](../modules/registry-cache.md) in that account. Nobody edits
-the store.
-
-`direct_pull_principals` is the escape hatch for clusters allowed to read the store directly.
+**Every account in the organization, read-only, in every region**, matched on `aws:PrincipalOrgID` and optionally
+narrowed by `organization_paths` or `account_ids`. The grant covers pulls and tag listing, which the flux
+`ECRArtifactTag` providers resolve application versions with. A new cluster account onboards without anyone editing the
+store.
 
 !!! note "The registry policy is a singleton"
 
-    `aws_ecr_registry_policy` is one per account per region, and the artifact store owns it. If the account uses
-    registry policies for anything else, merge those statements in through `additional_registry_statements`.
+    `aws_ecr_registry_policy` is one per account per region, and the artifact store owns it in every region it
+    manages. If the account uses registry policies for anything else, merge those statements in through
+    `additional_registry_statements`.
 
-## The registry cache
+## Regional replicas
 
-[registry-cache](../modules/registry-cache.md) is a pull-through cache of the store, applied in each cluster's own
-account and region. Images come from a registry beside the nodes, so there's no cross-account data path at pull time and
-no cross-region egress. The local prefix defaults to the upstream one, so image paths are the same on both sides. You
-can move a cluster between the cache and the store by changing one variable.
+Publishers push to the store's primary region only. ECR replication copies every push, including channel-tag moves, to
+each of the store's `replica_regions`, all in the store's own account. A cluster reads the replica in its own region, so
+a primary-region outage stops new releases from arriving but never stops a cluster reconciling what it already runs, or
+bootstrapping.
 
-A cache creates each repository on its **first pull**. Every puller (the kubelet, the flux controllers, Kyverno)
-therefore needs `ecr:CreateRepository` and `ecr:BatchImportUpstreamImage` as well as read access. Without them, a fresh
-cluster fails on its first image.
+ECR doesn't replicate repository settings. A replica repository gets its tag mutability, encryption and lifecycle only
+from a creation template in its own region, so the store keeps a REPLICATION copy of each template in every replica
+region. Deletes and lifecycle expiry don't replicate either: each region expires its own untagged images under the same
+rules.
 
-Digests are preserved end to end, so cosign verification works through the cache just as it does against the store.
-Signatures are ordinary tagged manifests (`sha256-<digest>.sig`) and pull through with everything else.
+Replication only carries pushes made after a region is added. Adding a region is a store change, plus one run of that
+region's `replication_backfill_commands` entry to copy what the store already holds.
 
 ## Choosing a registry
 
-`platform_registry` takes a `{ url, is_pull_through_cache }` object. Both registry modules emit exactly that shape, so
-wire it from a module output rather than writing it by hand:
+`platform_registry` takes a `{ url }` object. Wire it from the store's `platform_registries` output, which is keyed by
+region, rather than writing it by hand:
 
 ```hcl
-module "cache" {
-  source   = ".../modules/registry-cache"
-  upstream = { registry_id = "…", region = "eu-west-2" }
-}
-
 module "cluster" {
   source            = ".../terraform-aws-eks-flux"
-  platform_registry = module.cache.platform_registry # is_pull_through_cache = true
+  platform_registry = module.store.platform_registries["eu-west-2"] # the replica beside the cluster
 }
 ```
 
-The flag matters. It's what grants the cluster's pullers the create and import permissions a cache needs.
-
-To read the store directly, pass `module.store.platform_registry` instead (`is_pull_through_cache = false`). The store
-must then admit the cluster's `registry_reader_principals` output in its `direct_pull_principals`.
+Digests are preserved by replication, so cosign verification works against a replica just as it does against the
+primary.
 
 Every registry grant in the cluster module is scoped to the platform prefix (`repository/<prefix>/*`), never the whole
 registry.

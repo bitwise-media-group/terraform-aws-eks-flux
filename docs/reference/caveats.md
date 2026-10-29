@@ -94,10 +94,10 @@ They're available as community add-ons, but AWS supports only their lifecycle op
 as add-ons would also pull images from AWS's registry. That would break the rule that clusters never pull from a public
 registry, and the Kyverno policy that enforces it.
 
-### Pull-through coverage of charts and signatures is unvalidated
+### A new replica region starts empty
 
-ECR-to-ECR pull-through copies manifests and blobs, so OCI chart artifacts and `sha256-<digest>.sig` tags should pass
-through intact. The whole verification chain depends on it, so confirm both on first apply.
+ECR replication only carries pushes made after a region is added to `replica_regions`. Run that region's
+`replication_backfill_commands` entry once before pointing a cluster at it.
 
 ### `aws_ecr_registry_policy` is a singleton
 

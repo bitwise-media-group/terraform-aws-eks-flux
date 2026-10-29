@@ -24,15 +24,16 @@ The runnable version is [`examples/artifact-store`](../getting-started/examples.
 
 ## What it creates
 
-| Resource                                | Purpose                                                                                                                                                                |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Repository creation templates           | `CREATE_ON_PUSH` for everything beneath the prefix: lifecycle policy, immutable tags (`manifests/` exempts `edge`, `stable`, `staging`), encryption, tags              |
-| Template service role                   | The role ECR assumes when it creates a repository. It trusts all three ECR creation principals, so the template can later serve pull-through cache and replication too |
-| Registry policy                         | Pull for the ECR pull-through cache service, org-wide, plus `direct_pull_principals`                                                                                   |
-| Enhanced scanning configuration         | Scanning across the platform prefix (`enhanced_scanning`)                                                                                                              |
-| Chart publisher role                    | flux-containers: push to `charts/*` and `images/*` from its default branch                                                                                             |
-| One manifest publisher role per repo    | Push to the declared `paths`, from release tags, `main` and the promotion environment                                                                                  |
-| GitHub Actions OIDC provider (optional) | Created only when `oidc_provider_arn` isn't passed                                                                                                                     |
+| Resource                                | Purpose                                                                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository creation templates           | `CREATE_ON_PUSH` in the primary and `REPLICATION` in each replica region: lifecycle policy, immutable tags (`manifests/` exempts `edge`, `stable`, `staging`), encryption, tags |
+| Template service role                   | The role ECR assumes when it creates a repository, in any region                                                                                                                |
+| Replication configuration               | Copies every push beneath the prefix to each of `replica_regions`, in the same account (only when `replica_regions` is set)                                                     |
+| Registry policies                       | Org-wide read (pull and tag listing) in every region                                                                                                                            |
+| Enhanced scanning configurations        | Scanning across the platform prefix in every region (`enhanced_scanning`)                                                                                                       |
+| Chart publisher role                    | flux-containers: push to `charts/*` and `images/*` from its default branch                                                                                                      |
+| One manifest publisher role per repo    | Push to the declared `paths`, from release tags, `main` and the promotion environment                                                                                           |
+| GitHub Actions OIDC provider (optional) | Created only when `oidc_provider_arn` isn't passed                                                                                                                              |
 
 The store holds no signing key. Artifacts are signed keylessly by the publishing workflows, or with the
 [kms-signing-key](kms-signing-key.md) when `signing_kms_key_arn` is set, which grants the publisher roles `kms:Sign`.
@@ -66,13 +67,24 @@ soon as the repo exists. Until then the subject falls back to the name-only form
 
 ### Reads
 
-Reads are granted **org-wide** to the ECR pull-through cache service (`aws:PrincipalOrgID`, optionally narrowed by
-`organization_paths`), not per account. A new cluster account onboards by applying [registry-cache](registry-cache.md)
-there, never by editing this module. `direct_pull_principals` admits clusters that read the store directly. Wire those
-from a cluster module's `registry_reader_principals` output.
+Reads are granted **org-wide** (`aws:PrincipalOrgID`, optionally narrowed by `organization_paths` or `account_ids`), not
+per account, in every region. A new cluster account onboards without editing this module.
 
-`aws_ecr_registry_policy` is a singleton per account and region. If the account needs other registry policy statements,
-merge them in through `additional_registry_statements`.
+`aws_ecr_registry_policy` is a singleton per account and region, and this module owns it in every region it manages. If
+the account needs other registry policy statements, merge them in through `additional_registry_statements`.
+
+### Replicas
+
+Publishers push to the primary region only. `replica_regions` lists the regions, in the same account, that ECR
+replication copies every push to, including channel-tag moves. A cluster passes the `platform_registries` entry for its
+own region as its `platform_registry`, so it keeps reconciling while the primary region is down.
+
+ECR doesn't replicate repository settings, deletes or lifecycle expiry. Each replica region therefore gets its own
+`REPLICATION` copy of every creation template, and expires its own untagged images under the same rules. KMS keys are
+regional, so `kms_key_arns` needs one per region when set.
+
+Replication only carries pushes made after a region is added. Run the region's `replication_backfill_commands` entry
+once to copy what the store already holds.
 
 ### Upgrading from 3.x
 

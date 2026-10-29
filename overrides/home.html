@@ -83,16 +83,11 @@ page. -#}
                 <div class="tc-pane">
                     <div class="tc-pane__head"><b>1</b><span>main.tf</span></div>
                     <div class="tc-pane__body tc-toml">
-                        <div><span class="s">module</span> <span class="v">"cache"</span> {</div>
-                        <div>&nbsp;&nbsp;<span class="k">source</span>&nbsp;&nbsp; = <span class="v">".../modules/registry-cache"</span></div>
-                        <div>&nbsp;&nbsp;<span class="k">upstream</span> = { <span class="k">registry_id</span> = <span class="v">"…"</span>, <span class="k">region</span> = <span class="v">"eu-west-2"</span> }</div>
-                        <div>}</div>
-                        <div>&nbsp;</div>
                         <div><span class="s">module</span> <span class="v">"cluster"</span> {</div>
                         <div>&nbsp;&nbsp;<span class="k">source</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = <span class="v">".../terraform-aws-eks-flux"</span></div>
                         <div>&nbsp;&nbsp;<span class="k">name</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = <span class="v">"platform-x"</span></div>
                         <div>&nbsp;&nbsp;<span class="k">network</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = <span class="k">var</span>.network</div>
-                        <div>&nbsp;&nbsp;<span class="k">platform_registry</span> = <span class="k">module</span>.cache.platform_registry</div>
+                        <div>&nbsp;&nbsp;<span class="k">platform_registry</span> = <span class="k">var</span>.platform_registry <span class="cmt"># the store replica in this region</span></div>
                         <div>&nbsp;&nbsp;<span class="k">signed_identity</span>&nbsp;&nbsp; = <span class="k">var</span>.signed_identity</div>
                         <div>&nbsp;</div>
                         <div>&nbsp;&nbsp;<span class="k">platform_components</span> = [<span class="v">"flux-web"</span>, <span class="v">"arc"</span>]</div>
@@ -127,7 +122,7 @@ page. -#}
     aria-hidden because it is decorative and would otherwise be announced twice. -#}
     {% set tc_marquee = ["EKS", "Cilium ENI", "Gateway API", "Karpenter", "flux-operator", "FluxInstance",
     "ResourceSet", "Kyverno", "cert-manager", "external-dns", "dex", "cosign", "Fulcio", "KMS", "ECR",
-    "pull-through cache", "Pod Identity", "IRSA", "Secrets Manager", "Route53", "NLB + EIPs"] %}
+    "ECR replication", "Pod Identity", "IRSA", "Secrets Manager", "Route53", "NLB + EIPs"] %}
     <div class="tc-marquee" aria-hidden="true">
         <div class="tc-marquee__track">
             {% for i in [1, 2] %}{% for m in tc_marquee %}<span>{{ m }}</span>{% endfor %}{% endfor %}
@@ -260,13 +255,8 @@ page. -#}
             </a>
             <a class="tc-arch" href="{{ 'modules/artifact-store/' | url }}">
                 <span class="tc-arch__name">artifact-store</span>
-                <p>The central ECR prefix with create-on-push, plus per-repo GitHub Actions publishers.</p>
+                <p>The central ECR prefix with create-on-push, replicated to every cluster region, plus per-repo publishers.</p>
                 <code>modules/artifact-store</code>
-            </a>
-            <a class="tc-arch" href="{{ 'modules/registry-cache/' | url }}">
-                <span class="tc-arch__name">registry-cache</span>
-                <p>A pull-through cache of the store in each cluster account. Onboarding needs no store change.</p>
-                <code>modules/registry-cache</code>
             </a>
             <a class="tc-arch" href="{{ 'modules/kms-signing-key/' | url }}">
                 <span class="tc-arch__name">kms-signing-key</span>
@@ -329,7 +319,7 @@ page. -#}
 
     <!-- THREE STEPS -->
     <section class="tc-section tc-section--last">
-        <h2 class="tc-eyebrow">// THREE ROOTS TO A PLATFORM</h2>
+        <h2 class="tc-eyebrow">// THREE STEPS TO A PLATFORM</h2>
         <div class="tc-conn tc-steps">
             <div class="tc-step">
                 <div class="tc-step__body">
@@ -356,12 +346,12 @@ page. -#}
             <div class="tc-step">
                 <div class="tc-step__body">
                     <div class="tc-step__num">02</div>
-                    <h3>Cache</h3>
+                    <h3>Replicate</h3>
                     <p>
-                        Apply a pull-through cache in the cluster's account. The store admits the whole organization
-                        already.
+                        Add each cluster region to the store's <code>replica_regions</code> and backfill it once. The
+                        store admits the whole organization already.
                     </p>
-                    <a class="tc-step__alt" href="{{ 'modules/registry-cache/' | url }}">registry-cache
+                    <a class="tc-step__alt" href="{{ 'concepts/supply-chain/' | url }}">regional replicas
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
                             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M5 12h14" />
@@ -371,7 +361,7 @@ page. -#}
                 </div>
                 <div class="tc-cmd">
                     <span class="tc-p">$</span>
-                    <code>terraform -chdir=examples/registry-cache apply</code>
+                    <code>terraform -chdir=examples/artifact-store output replication_backfill_commands</code>
                     <div class="md-code__nav">
                         <button class="md-code__button" type="button" data-md-type="copy" title="Copy to clipboard"
                             aria-label="Copy to clipboard"></button>

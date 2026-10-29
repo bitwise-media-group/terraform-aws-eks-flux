@@ -6,7 +6,6 @@ on this page is pulled from those files when the site is built, so it always mat
 | Example                             | Apply in             | Shows                                                   |
 | ----------------------------------- | -------------------- | ------------------------------------------------------- |
 | [`artifact-store`](#artifact-store) | the platform account | The central store with one publisher per manifest repo. |
-| [`registry-cache`](#registry-cache) | each cluster account | A pull-through cache of the store.                      |
 | [`minimal`](#minimal)               | a cluster account    | The smallest cluster that reconciles.                   |
 | [`complete`](#complete)             | a cluster account    | Every surface on, with an application composed in.      |
 | [`application`](#application)       | an application root  | An application published to an existing cluster.        |
@@ -17,19 +16,11 @@ variables. See `variables.tf` beside each `main.tf`.
 ## artifact-store
 
 The store is applied once, in the platform account. `manifest_publishers` declares one push role per repo that publishes
-manifests. Each role can push only to the paths it lists. See [artifact-store](../modules/artifact-store.md).
+manifests. Each role can push only to the paths it lists, and `replica_regions` lists the regions clusters read a
+replica from. See [artifact-store](../modules/artifact-store.md).
 
 ```hcl title="examples/artifact-store/main.tf"
 --8<-- "examples/artifact-store/main.tf"
-```
-
-## registry-cache
-
-A cache is applied in each account that runs a cluster. The store needs no change to admit it. See
-[registry-cache](../modules/registry-cache.md).
-
-```hcl title="examples/registry-cache/main.tf"
---8<-- "examples/registry-cache/main.tf"
 ```
 
 ## minimal
@@ -46,7 +37,7 @@ components that need them. To reach anything running here you need `kubectl port
 
 Every surface turned on:
 
-- a pull-through cache in the cluster's account
+- the store's replica in the cluster's region
 - DNS/TLS wiring and reserved Gateway addresses
 - RBAC access entries and SSO
 - the `staging` sync channel and the electable platform components

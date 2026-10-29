@@ -45,26 +45,6 @@ data "aws_iam_policy_document" "registry_read" {
 
     resources = [var.registry_arn]
   }
-
-  # A pull-through cache materialises a repository on the FIRST pull, so the
-  # controllers need create/import as well as read when the registry is a
-  # cache rather than the store itself.
-  dynamic "statement" {
-    for_each = var.registry_is_pull_through_cache ? ["true"] : []
-
-    content {
-      sid    = "CacheFill"
-      effect = "Allow"
-
-      actions = [
-        "ecr:CreateRepository",
-        "ecr:BatchImportUpstreamImage",
-        "ecr:GetImageCopyStatus",
-      ]
-
-      resources = [var.registry_arn]
-    }
-  }
 }
 
 resource "aws_iam_role" "flux" {

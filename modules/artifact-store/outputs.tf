@@ -2,25 +2,40 @@
 # SPDX-License-Identifier: MIT
 
 output "platform_registry" {
-  description = <<-EOT
-    Feed straight into the cluster module's platform_registry. is_pull_through_cache is false because this IS the
-    store - a cluster wired here reads it directly, which additionally requires its registry_reader_principals to
-    appear in this module's direct_pull_principals. Most clusters should point at a registry-cache module's output
-    instead.
-  EOT
+  description = "The primary region's registry, in the cluster module's platform_registry shape - for clusters in the primary region. Clusters elsewhere take theirs from platform_registries."
   value = {
-    url                   = "${local.registry_host}/${var.repository_prefix}"
-    is_pull_through_cache = false
+    url = "${local.registry_host}/${var.repository_prefix}"
+  }
+}
+
+output "platform_registries" {
+  description = "Every region's registry (the primary and each replica), keyed by region, in the cluster module's platform_registry shape - a cluster takes the entry for its own region."
+  value = {
+    for region, host in local.registry_hosts : region => {
+      url = "${host}/${var.repository_prefix}"
+    }
+  }
+}
+
+output "replication_backfill_commands" {
+  description = "Per replica region, the AWS CLI command that copies everything already in the store to it. Replication only carries pushes made after a region is added, so run a region's command once after adding it (the job runs asynchronously; aws ecr list-replication-backfills shows its progress)."
+  value = {
+    for region in sort(tolist(var.replica_regions)) : region => join(" ", [
+      "aws ecr start-replication-backfill",
+      "--region ${local.region}",
+      "--registry-id ${local.account_id}",
+      "--destination region=${region},registryId=${local.account_id}",
+    ])
   }
 }
 
 output "registry_host" {
-  description = "Registry hostname for docker/helm/crane login (AWS/ecr get-login-password)."
+  description = "The primary region's registry hostname - where publishers push (docker/helm/crane login via aws ecr get-login-password)."
   value       = local.registry_host
 }
 
 output "registry_id" {
-  description = "Account id owning the registry - the upstream_registry_id a registry-cache module points at."
+  description = "Account id owning the registry in every region."
   value       = local.account_id
 }
 

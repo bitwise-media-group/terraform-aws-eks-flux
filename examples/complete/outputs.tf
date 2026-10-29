@@ -11,7 +11,7 @@ output "cluster" {
 }
 
 output "platform_registry" {
-  description = "The registry this cluster consumes from - the cache in this account, not the central store."
+  description = "The registry this cluster consumes from - the store's replica in this region."
   value       = module.cluster.platform_registry
 }
 

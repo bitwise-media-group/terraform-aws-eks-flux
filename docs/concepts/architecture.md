@@ -83,8 +83,9 @@ application. The only helm releases Terraform installs are bootstrap hand-overs.
 
 ECR has no arbitrary-path model. A repository creation template with `CREATE_ON_PUSH` makes up for that: publishers push
 to `<prefix>/charts/<name>`, `<prefix>/images/<path>` or `<prefix>/manifests/<name>`, and ECR creates the repository.
-Push rights are scoped per publisher. Reads are granted org-wide to the pull-through cache service, so onboarding a
-cluster account never edits the store. See [Registry & signing](supply-chain.md).
+Push rights are scoped per publisher. ECR replication copies every push to a replica in each region clusters run in, and
+each cluster reads the replica beside it, so a primary-region outage never stops it reconciling. Reads are granted
+org-wide, so onboarding a cluster account never edits the store. See [Registry & signing](supply-chain.md).
 
 ### Cosign everywhere
 

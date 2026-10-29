@@ -72,7 +72,6 @@ No modules.
 | kustomize\_patches | Extra kustomize patches applied to the generated Flux instance objects, on top of the built-in controller<br/>nodeSelector and flux-system OCIRepository verify patches. | `list(any)` | `[]` | no |
 | namespace | Namespace for the flux-operator and Flux controllers. | `string` | `"flux-system"` | no |
 | namespaces | Namespaces pre-created by the cluster-inputs chart (e.g. workload namespaces that must exist before their secrets<br/>arrive out-of-band); flux kustomizations adopt them via server-side apply. | `list(string)` | `[]` | no |
-| registry\_is\_pull\_through\_cache | Whether the platform registry is a pull-through cache. When set, the controllers also get ecr:CreateRepository and<br/>ecr:BatchImportUpstreamImage on the prefix - the first pull of any artifact is what materialises its repository. | `bool` | `true` | no |
 | tags | Tags applied to the IAM roles and Pod Identity associations this module creates. | `map(string)` | `{}` | no |
 | web\_config\_secret\_name | Name of a Secret in the namespace whose config.yaml key carries the Web Config API document for the Flux Status web<br/>UI (SSO, base URL). The operator hot-reloads it, so the Secret may arrive after bootstrap. Null runs the web server<br/>unconfigured (anonymous, defaults). | `string` | `null` | no |
 

@@ -4,12 +4,12 @@
 # The central platform artifact store, applied once in the platform account.
 # Feed its outputs to the publishing repos as the AWS_CHART_PUBLISHER_ROLE /
 # AWS_MANIFEST_PUBLISHER_ROLE (one per manifest-publishing repo) /
-# AWS_PLATFORM_REGISTRY Actions variables, and its registry_id to every
-# consuming account's registry-cache.
+# AWS_PLATFORM_REGISTRY Actions variables, and each cluster the
+# platform_registries entry for its own region.
 #
-# Reads are org-wide by construction: only the ECR pull-through cache service
-# may pull, matched on aws:PrincipalOrgID, so onboarding a new cluster account
-# means applying examples/registry-cache there - never editing this.
+# Reads are org-wide by construction, matched on aws:PrincipalOrgID in every
+# region, so onboarding a new cluster account needs no change here; a cluster
+# in a new region needs that region added to replica_regions.
 
 provider "aws" {
   region = var.region
@@ -22,6 +22,10 @@ module "store" {
   repository_prefix = "platform"
 
   organization_id = var.organization_id
+
+  # One replica per region clusters run in outside this one. After adding a
+  # region, run its replication_backfill_commands entry once.
+  replica_regions = var.replica_regions
 
   github = {
     # One publisher per manifest-publishing repo, scoped to its own paths:

@@ -2,13 +2,19 @@
 # SPDX-License-Identifier: MIT
 
 variable "region" {
-  description = "Region the store lives in. Consuming clusters cache from it into their own region, so this is not their latency path."
+  description = "The store's primary region, where publishers push. Clusters elsewhere read a replica in their own region, so this is not their latency (or availability) path."
   type        = string
   default     = "eu-west-2"
 }
 
+variable "replica_regions" {
+  description = "Regions the store is replicated to, one per region clusters run in outside the primary."
+  type        = set(string)
+  default     = []
+}
+
 variable "organization_id" {
-  description = "AWS Organizations id (o-xxxxxxxxxx) whose accounts may pull through an ECR pull-through cache."
+  description = "AWS Organizations id (o-xxxxxxxxxx) whose accounts may read the store and its replicas."
   type        = string
 }
 

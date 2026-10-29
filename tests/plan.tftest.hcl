@@ -69,8 +69,7 @@ variables {
   }
 
   platform_registry = {
-    url                   = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform"
-    is_pull_through_cache = true
+    url = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform"
   }
 
   signed_identity = {
@@ -275,8 +274,8 @@ run "additional_node_groups" {
   }
 
   assert {
-    condition     = length(local.registry_reader_principals) == 7
-    error_message = "the windows node role pulls images too, so it must join the registry reader principals"
+    condition     = anytrue([for arn in keys(aws_iam_role_policy_attachment.nodes_windows) : endswith(arn, ":policy/AmazonEC2ContainerRegistryPullOnly")])
+    error_message = "the windows node role pulls images too, so it must carry the registry pull policy"
   }
 }
 
@@ -1139,24 +1138,29 @@ run "kubectl_oidc_groups_prefix_must_be_nonempty" {
   expect_failures = [var.sso]
 }
 
-run "direct_store_reads_expose_principals" {
+run "replica_reads_are_read_only" {
   command = plan
 
   variables {
     platform_registry = {
-      url                   = "999988887777.dkr.ecr.eu-west-2.amazonaws.com/platform"
-      is_pull_through_cache = false
+      url = "999988887777.dkr.ecr.eu-west-2.amazonaws.com/platform"
     }
   }
 
-  # Reading a central store directly means feeding every puller to that store's
-  # direct_pull_principals, so the export must be complete: both node roles
-  # (kubelet pulls images), both flux controllers, and both kyverno controllers
-  # (they fetch signatures at admission). The ARNs themselves are unknown until
-  # apply, so the count is what a plan can check.
+  # The store's replica lives in the store's account: the read grants are
+  # scoped to its repositories there, and nothing creates or imports - a
+  # replica is filled by replication, never by the first pull.
   assert {
-    condition     = length(local.registry_reader_principals) == 6
-    error_message = "registry_reader_principals must cover both node roles, both flux controllers and both kyverno controllers"
+    condition     = local.registry_arn == "arn:aws:ecr:eu-west-2:999988887777:repository/platform/*"
+    error_message = "the pull grants must be scoped to the replica's repositories in the store's account and region"
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in data.aws_iam_policy_document.registry_read.statement :
+      length(setintersection(toset(statement.actions), toset(["ecr:CreateRepository", "ecr:BatchImportUpstreamImage"]))) == 0
+    ])
+    error_message = "reading a replica needs no repository creation or upstream import"
   }
 }
 

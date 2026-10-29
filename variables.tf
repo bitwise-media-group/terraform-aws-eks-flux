@@ -349,19 +349,15 @@ variable "addons" {
 
 variable "platform_registry" {
   description = <<-EOT
-    Where the cluster consumes charts, images and the manifests artifact from. Pass a module output rather than
-    composing this by hand - `module.cache.platform_registry` (a pull-through cache in the cluster's own account, the
-    default posture) or `module.store.platform_registry` (reading a central store directly, which additionally requires
-    the store to admit this cluster's registry_reader_principals). Both modules emit exactly this shape, so the
-    is_pull_through_cache flag is never guessed.
+    Where the cluster consumes charts, images and the manifests artifact from: the artifact store's replica in this
+    cluster's region, so the cluster keeps reconciling while the store's primary region is down. Pass the
+    artifact-store module's platform_registries["<region>"] output rather than composing it by hand.
 
-    url is <account>.dkr.ecr.<region>.amazonaws.com/<prefix>. is_pull_through_cache adds ecr:CreateRepository and
-    ecr:BatchImportUpstreamImage to every puller's grant - a cache materialises each repository on its FIRST pull, so
-    without them the first image pull of a fresh cluster fails.
+    url is <account>.dkr.ecr.<region>.amazonaws.com/<prefix>. The store's registry policy admits the whole
+    organization, so the cluster's pullers need only their own read grants on it.
   EOT
   type = object({
-    url                   = string
-    is_pull_through_cache = bool
+    url = string
   })
   nullable = false
 

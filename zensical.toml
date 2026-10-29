@@ -49,7 +49,6 @@ nav = [
     { "Overview" = "modules/index.md" },
     { "cluster (root)" = "modules/cluster.md" },
     { "artifact-store" = "modules/artifact-store.md" },
-    { "registry-cache" = "modules/registry-cache.md" },
     { "kms-signing-key" = "modules/kms-signing-key.md" },
     { "sso-secrets" = "modules/sso-secrets.md" },
     { "application" = "modules/application.md" },

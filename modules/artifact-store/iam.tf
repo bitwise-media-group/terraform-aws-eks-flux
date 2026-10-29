@@ -10,11 +10,10 @@
 # identities the platform has - every in-cluster workload uses EKS Pod
 # Identity instead.
 #
-# PULL: nothing by default except the ECR pull-through cache service, and that
-# ORG-WIDE rather than per-account, so a new cluster account onboards without
-# touching this module. Clusters read the store through a cache in their own
-# account (modules/registry-cache); direct_pull_principals is the escape hatch
-# for the ones the platform team lets read it straight.
+# PULL: org-wide read in every region (the primary and each replica), matched
+# on aws:PrincipalOrgID rather than an account list, so a new cluster account
+# onboards without touching this module. A cluster reads the replica in its own
+# region.
 
 locals {
   # GitHub mints immutable subjects for repos created (or renamed/transferred)
@@ -250,8 +249,9 @@ moved {
 # ones that do not exist yet.
 #
 # NOTE: ECR allows exactly one registry policy per account per region. This
-# module owns it; an account using registry policies for anything else must
-# merge those statements in via additional_registry_statements.
+# module owns it in every region it manages; an account using registry policies
+# for anything else must merge those statements in via
+# additional_registry_statements (applied in every region).
 # ---------------------------------------------------------------------------
 
 # Built as plain structures rather than through aws_iam_policy_document: this
@@ -259,63 +259,59 @@ moved {
 # into it, and writing it directly keeps it readable and assertable instead of
 # round-tripping a rendered document back through jsondecode.
 locals {
-  # The cross-account ECR -> ECR pull-through cache grant. AWS documents this
-  # as one <account>:root principal per downstream account; the actual caller
-  # is that account's PTC role (assumed by pullthroughcache.ecr.amazonaws.com),
-  # so aws:PrincipalOrgID matches it and covers every current AND future member
-  # account - no list to maintain as clusters come online. account_ids trades
-  # that for an explicit list where only known accounts should cache the store.
-  pull_through_cache_statement = {
-    Sid    = "OrganizationPullThroughCache"
-    Effect = "Allow"
+  # The org-wide read grant: every principal in the organization (a cluster's
+  # nodes, flux controllers and kyverno) may pull, and list tags - the flux
+  # ECRArtifactTag input providers resolve application versions through the
+  # ECR API. aws:PrincipalOrgID covers every current AND future member account,
+  # so there is no list to maintain as clusters come online; account_ids trades
+  # that for an explicit list where only known accounts should read the store.
+  organization_read_statements = {
+    for region, arn_pattern in local.repository_arn_patterns : region => {
+      Sid    = "OrganizationRead"
+      Effect = "Allow"
 
-    Action = [
-      "ecr:BatchGetImage",
-      "ecr:GetDownloadUrlForLayer",
-      "ecr:BatchImportUpstreamImage",
-      "ecr:GetImageCopyStatus",
-    ]
+      Action = [
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:DescribeImages",
+        "ecr:ListImages",
+      ]
 
-    Resource  = local.repository_arn_pattern
-    Principal = { AWS = "*" }
+      Resource  = arn_pattern
+      Principal = { AWS = "*" }
 
-    Condition = merge(
-      {
-        StringEquals = merge(
-          { "aws:PrincipalOrgID" = var.organization_id },
-          # Optional narrowing to specific member accounts, ANDed with the org.
-          length(var.account_ids) > 0 ? { "aws:PrincipalAccount" = sort(var.account_ids) } : {},
-        )
-      },
-      # Optional narrowing to specific organizational units.
-      length(var.organization_paths) > 0 ? {
-        "ForAnyValue:StringLike" = { "aws:PrincipalOrgPaths" = var.organization_paths }
-      } : {},
-    )
+      Condition = merge(
+        {
+          StringEquals = merge(
+            { "aws:PrincipalOrgID" = var.organization_id },
+            # Optional narrowing to specific member accounts, ANDed with the org.
+            length(var.account_ids) > 0 ? { "aws:PrincipalAccount" = sort(var.account_ids) } : {},
+          )
+        },
+        # Optional narrowing to specific organizational units.
+        length(var.organization_paths) > 0 ? {
+          "ForAnyValue:StringLike" = { "aws:PrincipalOrgPaths" = var.organization_paths }
+        } : {},
+      )
+    }
   }
 
-  # Named principals allowed to read the store DIRECTLY rather than through a
-  # cache - feed a cluster's registry_reader_principals output through here.
-  direct_pull_statements = length(var.direct_pull_principals) > 0 ? [
-    {
-      Sid       = "DirectPull"
-      Effect    = "Allow"
-      Action    = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
-      Resource  = local.repository_arn_pattern
-      Principal = { AWS = var.direct_pull_principals }
-    }
-  ] : []
-
-  registry_statements = concat(
-    [local.pull_through_cache_statement],
-    local.direct_pull_statements,
-    var.additional_registry_statements,
-  )
+  registry_policies = {
+    for region, statement in local.organization_read_statements : region => jsonencode({
+      Version   = "2012-10-17"
+      Statement = concat([statement], var.additional_registry_statements)
+    })
+  }
 }
 
 resource "aws_ecr_registry_policy" "platform" {
-  policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = local.registry_statements
-  })
+  policy = local.registry_policies[local.region]
+}
+
+resource "aws_ecr_registry_policy" "replica" {
+  for_each = var.replica_regions
+
+  region = each.key
+  policy = local.registry_policies[each.key]
 }

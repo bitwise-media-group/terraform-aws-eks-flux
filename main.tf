@@ -49,8 +49,7 @@ locals {
   registry_owner  = split(".", local.registry_host)[0]
 
   # Every repository beneath the platform prefix, in the registry's own
-  # account - which is the cluster's account when platform_registry is a
-  # pull-through cache, and the store's account when it is read directly.
+  # account and region - the artifact store's replica beside the cluster.
   registry_arn = "arn:${local.partition}:ecr:${local.registry_region}:${local.registry_owner}:repository/${local.registry_prefix}/*"
 
   addons = { for name, addon in var.addons : name => addon if addon.enabled }

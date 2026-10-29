@@ -19,8 +19,14 @@ paths it lists - the platform repo keeps `manifests/*` because it is the platfor
 its own path alone, so it can never overwrite the platform entrypoint or another application. Each repo sets the
 matching `manifest_publishers[<repo>].arn` as its `AWS_MANIFEST_PUBLISHER_ROLE` variable.
 
-Reads are granted **org-wide** to the ECR pull-through cache service (`aws:PrincipalOrgID`), not per account, so a new
-cluster account onboards by applying `modules/registry-cache` there rather than by editing this module.
+**Replicas.** Publishers push to the primary region; ECR replication copies every push to each of `replica_regions` in
+the same account, and each replica region carries `REPLICATION` copies of the creation templates (ECR replicates
+neither repository settings nor deletes). A cluster reads the `platform_registries` entry for its own region, so it
+keeps reconciling while the primary is down. A newly added region starts empty - run its
+`replication_backfill_commands` entry once.
+
+Reads are granted **org-wide** (`aws:PrincipalOrgID`) in every region, not per account, so a new cluster account
+onboards without editing this module.
 
 Before 4.0 the store knew a single manifests publisher (`github.manifests_id`) pushing one `flux-manifests` artifact;
 the platform publisher's role is renamed on upgrade (`<name>-manifest-publisher` becomes `<name>-<repo>-publisher`), so
@@ -50,9 +56,12 @@ No modules.
 | Name | Type |
 | ---- | ---- |
 | [aws_ecr_registry_policy.platform](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_registry_policy) | resource |
+| [aws_ecr_registry_policy.replica](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_registry_policy) | resource |
 | [aws_ecr_registry_scanning_configuration.platform](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_registry_scanning_configuration) | resource |
-| [aws_ecr_repository_creation_template.manifests](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_repository_creation_template) | resource |
-| [aws_ecr_repository_creation_template.platform](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_repository_creation_template) | resource |
+| [aws_ecr_registry_scanning_configuration.replica](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_registry_scanning_configuration) | resource |
+| [aws_ecr_replication_configuration.platform](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_replication_configuration) | resource |
+| [aws_ecr_repository_creation_template.primary](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_repository_creation_template) | resource |
+| [aws_ecr_repository_creation_template.replica](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecr_repository_creation_template) | resource |
 | [aws_iam_openid_connect_provider.github](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_openid_connect_provider) | resource |
 | [aws_iam_role.chart_publisher](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role.creation](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
@@ -72,18 +81,18 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| organization\_id | AWS Organizations id (o-xxxxxxxxxx). Every account in the organization may pull through an ECR pull-through cache,<br/>matched by aws:PrincipalOrgID rather than an account list - so onboarding a new cluster account needs no change<br/>here. Narrow it with organization\_paths if the whole org is too broad. | `string` | n/a | yes |
-| account\_ids | Optional aws:PrincipalAccount ids narrowing the pull-through grant to particular member accounts, for a store only<br/>a known set of accounts should cache - onboarding another one then means adding it here. Empty admits the whole<br/>organization (or organization\_paths). | `set(string)` | `[]` | no |
-| additional\_registry\_statements | Extra IAM statements merged into the ECR registry policy. ECR allows exactly one registry policy per account per<br/>region and this module owns it, so an account using registry policies for anything else must pass those statements<br/>here rather than declaring a second resource. | `list(any)` | `[]` | no |
-| direct\_pull\_principals | IAM principals allowed to pull from the store DIRECTLY rather than through a pull-through cache - the escape hatch<br/>for clusters the platform team lets read it straight. Feed a cluster module's registry\_reader\_principals output<br/>through here. Content security is cosign verification, not read denial, so coarse principals are acceptable. | `list(string)` | `[]` | no |
+| organization\_id | AWS Organizations id (o-xxxxxxxxxx). Every account in the organization may read the store and its replicas,<br/>matched by aws:PrincipalOrgID rather than an account list - so onboarding a new cluster account needs no change<br/>here. Narrow it with organization\_paths or account\_ids if the whole org is too broad. | `string` | n/a | yes |
+| account\_ids | Optional aws:PrincipalAccount ids narrowing the read grant to particular member accounts, for a store only a known<br/>set of accounts should read - onboarding another one then means adding it here. Empty admits the whole<br/>organization (or organization\_paths). | `set(string)` | `[]` | no |
+| additional\_registry\_statements | Extra IAM statements merged into the ECR registry policy of every region (the primary and each replica). ECR<br/>allows exactly one registry policy per account per region and this module owns it, so an account using registry<br/>policies for anything else must pass those statements here rather than declaring a second resource. | `list(any)` | `[]` | no |
 | enhanced\_scanning | Turn on ECR enhanced (Inspector) continuous scanning for the platform prefix. Registry-scoped by construction, so<br/>leave it off where another owner manages the registry's scanning configuration. | `bool` | `true` | no |
 | github | GitHub org and repository names the publisher trust is pinned to, plus the immutable numeric ids GitHub embeds in<br/>the OIDC subjects of post-2026-07-15 repos (org\_id from GET /orgs/<org>, repo ids from GET /repos/<org>/<repo>).<br/>containers is the chart/image mirror (flux-containers). manifest\_publishers is every repo that publishes manifest<br/>images, keyed by repo name: the platform's (paths ["manifests/*"], the platform authority) and one per application<br/>repo (paths ["manifests/<app>"], so an application can never overwrite the platform). Each gets its own role,<br/>trusted from main, release tags and the promotion environment, with push scoped to exactly its paths;<br/>repository\_id may stay null until that repo exists on GitHub. platform names the key that publishes the<br/>platform entrypoint - its workflow identities are what signed\_identity\_subjects exports for the cluster<br/>module. | <pre>object({<br/>    org           = optional(string, "bitwise-media-group")<br/>    org_id        = optional(number, 282673588)<br/>    containers    = optional(string, "flux-containers")<br/>    containers_id = optional(number, 1303643498)<br/>    platform      = optional(string, "flux-manifests")<br/>    manifest_publishers = optional(map(object({<br/>      repository_id = optional(number)<br/>      paths         = list(string)<br/>    })), { flux-manifests = { paths = ["manifests/*"] } })<br/>  })</pre> | `{}` | no |
 | github\_oidc\_thumbprints | Certificate thumbprints for the GitHub Actions OIDC provider, used only when this module creates it. IAM no longer<br/>validates these for well-known issuers, so the value is a formality kept explicit rather than implicit. | `list(string)` | <pre>[<br/>  "6938fd4d98bab03faadb97b34396831e3780aea1"<br/>]</pre> | no |
-| kms\_key\_arn | Customer-managed KMS key for repository encryption; null uses ECR's AES256 default. | `string` | `null` | no |
+| kms\_key\_arns | Customer-managed KMS keys for repository encryption, keyed by region. KMS keys are regional, so when set this must<br/>hold one for the primary region and one for every replica region (the replicas of a multi-region key work). Empty<br/>uses ECR's AES256 default everywhere. | `map(string)` | `{}` | no |
 | name | Base name for the publisher and repository-creation IAM roles (keep it short). | `string` | `"platform"` | no |
 | oidc\_provider\_arn | ARN of an existing GitHub Actions OIDC provider in this account. Null creates one here - convenient for a<br/>standalone store, but an account that already has one (or gets one from a cloud-accounts aws environment) must pass<br/>it, since IAM permits only a single provider per issuer URL. | `string` | `null` | no |
-| organization\_paths | Optional aws:PrincipalOrgPaths patterns narrowing the pull-through grant to particular organizational units, e.g.<br/>["o-abc123/r-root/ou-workloads/*"]. Empty admits the whole organization. | `list(string)` | `[]` | no |
+| organization\_paths | Optional aws:PrincipalOrgPaths patterns narrowing the read grant to particular organizational units, e.g.<br/>["o-abc123/r-root/ou-workloads/*"]. Empty admits the whole organization. | `list(string)` | `[]` | no |
 | promotion\_environment | GitHub environment (protected, reviewer-gated) whose jobs may move the stable channel tag. | `string` | `"production"` | no |
+| replica\_regions | Regions, in this same account, the store is replicated to - one per region clusters run in outside the primary<br/>(the region this module is applied in). Every push, channel-tag moves included, is copied to each, and a cluster<br/>reads the replica in its own region (the platform\_registries output), so it keeps reconciling while the primary<br/>region is down. Each replica gets the same creation templates (as REPLICATION templates), registry policy and<br/>scanning. Only pushes made after a region is added replicate: run that region's<br/>replication\_backfill\_commands entry once to copy what is already in the store. | `set(string)` | `[]` | no |
 | repository\_prefix | ECR repository name prefix everything lands beneath: charts at <prefix>/charts/<name>, images at<br/><prefix>/images/<original-path>, and the manifest images at <prefix>/manifests/platform (the platform<br/>entrypoint), <prefix>/manifests/<component> and <prefix>/manifests/<application>. The creation template is<br/>keyed on this prefix, so it is also what makes create-on-push work. | `string` | `"platform"` | no |
 | signing\_kms\_key\_arn | Asymmetric SIGN\_VERIFY KMS key the publish workflows sign artifacts with (cosign sign --key awskms:///<arn>),<br/>instead of keyless Fulcio identities. When set, every publisher role gets kms:Sign / kms:GetPublicKey /<br/>kms:DescribeKey on the key; feed the same ARN to the cluster module's signed\_identity.kms\_key\_arn so verification<br/>matches. Null keeps signing keyless (the signed\_identity\_subjects output). The key itself lives outside this<br/>module - signing identity should outlive any one store. | `string` | `null` | no |
 | tags | Tags applied to the IAM roles and to every repository the creation template makes. | `map(string)` | `{}` | no |
@@ -100,9 +109,11 @@ No modules.
 | manifests\_prefix | OCI prefix every manifest image is published under: manifests/platform, manifests/<component> and manifests/<application> beneath it. The AWS\_PLATFORM\_REGISTRY-derived base the publish workflows push to. |
 | oidc\_provider\_arn | The GitHub Actions OIDC provider the publishers federate through - created here or passed in. |
 | platform\_manifests\_url | OCI url of the platform entrypoint image the clusters sync (the cluster module's flux.sync.url default). |
-| platform\_registry | Feed straight into the cluster module's platform\_registry. is\_pull\_through\_cache is false because this IS the<br/>store - a cluster wired here reads it directly, which additionally requires its registry\_reader\_principals to<br/>appear in this module's direct\_pull\_principals. Most clusters should point at a registry-cache module's output<br/>instead. |
-| registry\_host | Registry hostname for docker/helm/crane login (AWS/ecr get-login-password). |
-| registry\_id | Account id owning the registry - the upstream\_registry\_id a registry-cache module points at. |
+| platform\_registries | Every region's registry (the primary and each replica), keyed by region, in the cluster module's platform\_registry shape - a cluster takes the entry for its own region. |
+| platform\_registry | The primary region's registry, in the cluster module's platform\_registry shape - for clusters in the primary region. Clusters elsewhere take theirs from platform\_registries. |
+| registry\_host | The primary region's registry hostname - where publishers push (docker/helm/crane login via aws ecr get-login-password). |
+| registry\_id | Account id owning the registry in every region. |
+| replication\_backfill\_commands | Per replica region, the AWS CLI command that copies everything already in the store to it. Replication only carries pushes made after a region is added, so run a region's command once after adding it (the job runs asynchronously; aws ecr list-replication-backfills shows its progress). |
 | repository\_prefix | The repository name prefix everything lands beneath, and the prefix the creation template is keyed on. |
 | signed\_identity\_subjects | Fulcio certificate-subject regexps for the chart mirror and the platform manifests publisher (keyless mode) - feed these to the cluster module's signed\_identity variable. Cloud-agnostic: the signer is GitHub, not the hosting cloud. Irrelevant when signing\_kms\_key\_arn selects KMS signing. Application publishers' subjects ride in manifest\_publishers. |
 | signing\_kms\_key\_arn | The KMS signing key the publishers sign with (null in keyless mode) - feed it to the cluster module's signed\_identity.kms\_key\_arn so verification matches. |
