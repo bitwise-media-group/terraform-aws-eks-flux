@@ -61,10 +61,35 @@ run "create_on_push" {
     error_message = "the template must be keyed on the same prefix everything is published beneath"
   }
 
-  # Channel tags (staging, stable, edge) move between releases.
   assert {
-    condition     = aws_ecr_repository_creation_template.platform.image_tag_mutability == "MUTABLE"
-    error_message = "tags must stay mutable: the manifests artifact's channel tags move"
+    condition     = aws_ecr_repository_creation_template.platform.image_tag_mutability == "IMMUTABLE"
+    error_message = "charts and images must be tag-immutable: a published tag never changes digest"
+  }
+
+  # The longer prefix wins, so this template alone governs every manifest image.
+  assert {
+    condition     = aws_ecr_repository_creation_template.manifests.prefix == "platform/manifests"
+    error_message = "the manifests template must be keyed on <prefix>/manifests to take precedence there"
+  }
+
+  assert {
+    condition     = contains(aws_ecr_repository_creation_template.manifests.applied_for, "CREATE_ON_PUSH")
+    error_message = "the manifests template must apply to CREATE_ON_PUSH, or manifest pushes to new paths fail"
+  }
+
+  # Channel tags (staging, stable, edge) move between releases; version tags
+  # must not.
+  assert {
+    condition     = aws_ecr_repository_creation_template.manifests.image_tag_mutability == "IMMUTABLE_WITH_EXCLUSION"
+    error_message = "manifest images must be tag-immutable except for their channel tags"
+  }
+
+  assert {
+    condition = (
+      toset([for f in aws_ecr_repository_creation_template.manifests.image_tag_mutability_exclusion_filter : f.filter]) == toset(["edge", "stable", "staging"])
+      && alltrue([for f in aws_ecr_repository_creation_template.manifests.image_tag_mutability_exclusion_filter : f.filter_type == "WILDCARD"])
+    )
+    error_message = "exactly the edge, stable and staging channel tags may move on manifest images"
   }
 
   # ECR fails repository creation outright if the template sets tags or KMS

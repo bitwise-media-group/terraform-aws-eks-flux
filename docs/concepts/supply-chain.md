@@ -24,8 +24,10 @@ ECR has no arbitrary-path model. Every one of those paths is a real repository t
 and ECR creates the repository with the template's lifecycle policy, tag mutability, encryption and tags. Without a
 matching template, ECR refuses to create on push at all.
 
-Tags stay **mutable**. The channel tags (`staging`, `stable`, `edge`) move between releases, and tag immutability is per
-repository. The publish workflows protect version tags by refusing to overwrite an existing digest.
+Tags are **immutable**, so a published tag can never be re-pointed at a different digest. The one exception is the
+channel tags (`staging`, `stable`, `edge`) on the manifest images, which must move between releases. ECR applies the
+creation template with the longest matching prefix, so `<prefix>/manifests` gets its own template:
+`IMMUTABLE_WITH_EXCLUSION`, exempting exactly those three tags. Version tags stay immutable everywhere.
 
 ### Who can push
 

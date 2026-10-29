@@ -26,7 +26,7 @@ The runnable version is [`examples/artifact-store`](../getting-started/examples.
 
 | Resource                                | Purpose                                                                                                                                                                |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Repository creation template            | `CREATE_ON_PUSH` for everything beneath the prefix: lifecycle policy, mutable tags, encryption, tags                                                                   |
+| Repository creation templates           | `CREATE_ON_PUSH` for everything beneath the prefix: lifecycle policy, immutable tags (`manifests/` exempts `edge`, `stable`, `staging`), encryption, tags              |
 | Template service role                   | The role ECR assumes when it creates a repository. It trusts all three ECR creation principals, so the template can later serve pull-through cache and replication too |
 | Registry policy                         | Pull for the ECR pull-through cache service, org-wide, plus `direct_pull_principals`                                                                                   |
 | Enhanced scanning configuration         | Scanning across the platform prefix (`enhanced_scanning`)                                                                                                              |

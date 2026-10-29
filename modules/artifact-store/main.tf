@@ -13,9 +13,13 @@
 # ECR has no arbitrary-path model: every one of those is a real repository that
 # must exist before a push. A REPOSITORY CREATION TEMPLATE with CREATE_ON_PUSH
 # is what restores Artifact Registry's ergonomics - publishers simply push, and
-# ECR creates each repository with this template's lifecycle policy, tag
-# mutability, encryption and tags. Without a matching template ECR refuses to
-# create on push at all, so the template is essential, not a nicety.
+# ECR creates each repository with the matching template's lifecycle policy,
+# tag mutability, encryption and tags. Without a matching template ECR refuses
+# to create on push at all, so the templates are essential, not a nicety.
+#
+# Every tag is IMMUTABLE except the channel tags on the manifest images: ECR
+# applies the template with the longest matching prefix, so <prefix>/manifests
+# gets its own template that exempts exactly those tags.
 #
 # There is no signing key anywhere in this module: artifacts are cosign-signed
 # KEYLESSLY by the publishing GitHub Actions workflows (OIDC -> Fulcio/Rekor),
@@ -38,6 +42,10 @@ locals {
 
   # Every repository beneath the platform prefix.
   repository_arn_pattern = "arn:${local.partition}:ecr:${local.region}:${local.account_id}:repository/${var.repository_prefix}/*"
+
+  # Release tags move staging, merges to main move edge, the promotion
+  # environment moves stable.
+  manifest_channel_tags = ["edge", "stable", "staging"]
 
   # Untagged manifests are what failed and superseded pushes leave behind.
   lifecycle_policy = jsonencode({
@@ -110,18 +118,44 @@ resource "aws_iam_role_policy" "creation" {
 
 resource "aws_ecr_repository_creation_template" "platform" {
   prefix      = var.repository_prefix
-  description = "Platform artifact store: mirrored charts + images and the signed platform, component and application manifest images"
+  description = "Platform artifact store: mirrored charts + images, every tag immutable"
 
   # Publishers push straight to <prefix>/<path> and the repository appears.
   applied_for = ["CREATE_ON_PUSH"]
 
   custom_role_arn = aws_iam_role.creation.arn
 
-  # Channel tags (staging/stable) on the manifest images must move between
-  # releases, and tag immutability is per repository, so it stays off. Version
-  # tags are protected from reuse by the publish workflows refusing to
-  # overwrite an existing digest, not by the registry.
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
+
+  encryption_configuration {
+    encryption_type = var.kms_key_arn != null ? "KMS" : "AES256"
+    kms_key         = var.kms_key_arn
+  }
+
+  lifecycle_policy = local.lifecycle_policy
+
+  resource_tags = var.tags
+}
+
+# Wins over the platform template for <prefix>/manifests/* (longest prefix).
+resource "aws_ecr_repository_creation_template" "manifests" {
+  prefix      = "${var.repository_prefix}/manifests"
+  description = "Platform artifact store manifest images: immutable version tags, movable channel tags"
+
+  applied_for = ["CREATE_ON_PUSH"]
+
+  custom_role_arn = aws_iam_role.creation.arn
+
+  image_tag_mutability = "IMMUTABLE_WITH_EXCLUSION"
+
+  dynamic "image_tag_mutability_exclusion_filter" {
+    for_each = local.manifest_channel_tags
+
+    content {
+      filter      = image_tag_mutability_exclusion_filter.value
+      filter_type = "WILDCARD"
+    }
+  }
 
   encryption_configuration {
     encryption_type = var.kms_key_arn != null ? "KMS" : "AES256"
