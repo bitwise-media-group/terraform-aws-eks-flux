@@ -40,6 +40,12 @@ The operator, instance and application releases are **bootstrap-only** (`ignore_
 kustomize patch on the generated `flux-system` `OCIRepository`: keyless (issuer and subject) or keyed against the
 `cosign-pub` Secret. Each application seed verifies its own image in the `OCIRepository` its `ResourceSet` emits.
 
+### Substitution
+
+`FluxInstance.spec.sync` has no substitution field either. A second patch adds `postBuild.substituteFrom: cluster-vars`
+to the generated `flux-system` `Kustomization`, so the platform entrypoint reads the cluster vars like every
+`Kustomization` it emits.
+
 ### How images are listed and pulled
 
 The **registry** decides, never the cloud:

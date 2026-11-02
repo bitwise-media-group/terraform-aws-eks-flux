@@ -1,8 +1,8 @@
 # The flux contract
 
 Terraform and the platform manifests meet in exactly one place: the **`cluster-vars` ConfigMap** in `flux-system`. Every
-platform `Kustomization` substitutes from it through `postBuild.substituteFrom`, and applications can read it too. This
-page covers how the bootstrap gets flux running, and what the contract carries.
+platform `Kustomization`, the sync's own included, substitutes from it through `postBuild.substituteFrom`, and
+applications can read it too. This page covers how the bootstrap gets flux running, and what the contract carries.
 
 ## The bootstrap chain
 
@@ -41,6 +41,11 @@ The instance has a single sync: the platform entrypoint image.
 
 The entrypoint pins every component to the same channel unless a `<NAME>_MANIFESTS_REF` cluster var overrides one. The
 manifests are per-cloud trees, and `flux.sync.path` selects the `aws` tree (flux-manifests 4.0.0 or later).
+
+The `FluxInstance` sync has no verify or substitution field, so both ride in as kustomize patches on the objects it
+generates: a cosign `verify` block on the `flux-system` `OCIRepository`, and `postBuild.substituteFrom: cluster-vars` on
+the `flux-system` `Kustomization`. The entrypoint therefore reads the cluster vars like every `Kustomization` it emits.
+The platform's flux component must carry the same two patches, since it re-renders the `FluxInstance` after bootstrap.
 
 !!! tip "Re-pointing a running cluster"
 
