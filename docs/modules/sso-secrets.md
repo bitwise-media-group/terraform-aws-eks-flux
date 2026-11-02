@@ -10,7 +10,8 @@ module "sso_secrets" {
   source = "git::https://github.com/bitwise-media-group/terraform-aws-eks-flux.git//modules/sso-secrets?ref=vX.Y.Z"
 
   # Mirror the cluster module call in the (separate, disposable) cluster root.
-  secret_prefix = "platform-x-"
+  secret_prefix   = "platform-x-"
+  replica_regions = ["eu-west-2"] # every other region clusters run in
   sso = {
     enabled   = true
     connector = { type = "google" }
@@ -18,7 +19,7 @@ module "sso_secrets" {
 }
 ```
 
-After the first apply, add a value to every secret out of band:
+After the first apply, add a value to every secret out of band, in the region the module is applied in:
 
 ```sh
 aws secretsmanager put-secret-value --secret-id <name> --secret-string file://...
@@ -41,6 +42,13 @@ names can't drift. A secret that no sync references is never created, and every 
 Don't put this module next to the cluster. The secret **values** are added out of band, never through Terraform state,
 and must survive a cluster being destroyed and recreated without anyone entering them again. An upstream OAuth client
 outlives any one cluster, so its credentials must too. Pass the cluster module's `sso` value here verbatim.
+
+### One value, every region
+
+Each secret is replicated to every region in `replica_regions`: list each region clusters run in other than the one the
+module is applied in, as you do for the artifact store. Secrets Manager copies every version put in the primary to the
+replicas, so a credential is entered once. A cluster reads the replica in its own region, because its reader roles are
+scoped to that region's ARNs. A replica is read-only: put new values in the primary.
 
 ### Containers only, no grants
 

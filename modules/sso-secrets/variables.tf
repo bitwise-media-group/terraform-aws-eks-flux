@@ -54,6 +54,23 @@ variable "sso" {
   }
 }
 
+variable "replica_regions" {
+  description = <<-EOT
+    Regions, in this same account, every secret is replicated to - one per region clusters run in outside the primary
+    (the region this module is applied in), matching the artifact store's replica_regions. Secrets Manager copies each
+    out-of-band version to every replica, so a value is put once, in the primary, and a cluster reads the replica in its
+    own region (its reader roles scope to that region's ARNs).
+  EOT
+  type        = set(string)
+  nullable    = false
+  default     = []
+
+  validation {
+    condition     = alltrue([for region in var.replica_regions : can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]$", region))])
+    error_message = "replica_regions must be AWS region names (e.g. eu-west-2)."
+  }
+}
+
 variable "tags" {
   description = "Tags applied to every secret."
   type        = map(string)

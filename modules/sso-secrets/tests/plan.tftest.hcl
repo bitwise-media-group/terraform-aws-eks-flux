@@ -105,3 +105,39 @@ run "sso_enabled_no_connector_no_containers" {
     error_message = "sso.enabled alone (no connector) must create no dex credential containers -- no connector exists by default"
   }
 }
+
+run "replicas_follow_replica_regions" {
+  command = plan
+
+  variables {
+    replica_regions = ["eu-west-2", "us-west-2"]
+    sso = {
+      enabled   = true
+      connector = { id = "okta", type = "oidc" }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for secret in values(aws_secretsmanager_secret.main) :
+      toset([for replica in secret.replica : replica.region]) == toset(["eu-west-2", "us-west-2"])
+    ])
+    error_message = "every secret must replicate to each replica_regions entry, so a cluster in that region reads the copy beside it"
+  }
+}
+
+run "no_replicas_by_default" {
+  command = plan
+
+  variables {
+    sso = {
+      enabled   = true
+      connector = { type = "google" }
+    }
+  }
+
+  assert {
+    condition     = alltrue([for secret in values(aws_secretsmanager_secret.main) : length(secret.replica) == 0])
+    error_message = "without replica_regions the secrets stay in the primary region only"
+  }
+}

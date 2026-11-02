@@ -53,5 +53,15 @@ resource "aws_secretsmanager_secret" "main" {
   name        = "${local.prefix}${each.key}"
   description = "${each.value}. Versions arrive out of band; readable by the cluster's secret-sync reader roles."
 
+  # Versions put in the primary replicate to every region, so a cluster
+  # outside the primary reads the copy beside it.
+  dynamic "replica" {
+    for_each = var.replica_regions
+
+    content {
+      region = replica.value
+    }
+  }
+
   tags = var.tags
 }

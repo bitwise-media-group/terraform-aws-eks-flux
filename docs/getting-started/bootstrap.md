@@ -72,7 +72,8 @@ Two things land in a second apply:
   has reconciled it. So apply with `sso.kubectl.enabled = false` first. Flip it on once dex is serving over its Gateway
   route.
 - **SSO connector credentials.** Apply [`sso-secrets`](../modules/sso-secrets.md) in a durable root with the same `sso`
-  value. Then add each secret's value out of band with `aws secretsmanager put-secret-value`.
+  value, and the same `replica_regions` as the artifact store. Then add each secret's value out of band, in the primary
+  region, with `aws secretsmanager put-secret-value`.
 
 ## Onboarding another cluster account
 
@@ -80,5 +81,6 @@ You don't need to touch the store. Its registry policy admits every account in t
 new account, apply the cluster.
 
 A cluster in a **new region** does need a store change: add the region to `replica_regions`, apply, then run that
-region's `replication_backfill_commands` entry once. Replication only carries pushes made after the region is added, so
-the backfill is what copies everything the store already holds.
+region's `replication_backfill_commands` entry once. Add it to the `sso-secrets` `replica_regions` too; its existing
+values replicate with no backfill. Replication only carries pushes made after the region is added, so the backfill is
+what copies everything the store already holds.
