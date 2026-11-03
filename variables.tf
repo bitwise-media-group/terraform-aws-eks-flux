@@ -172,6 +172,12 @@ variable "system_node_group" {
     The always-on managed node group platform controllers pin to (label role=system): flux, kyverno, cert-manager,
     external-dns, karpenter and the rest. These counts are CLUSTER-WIDE totals, not per-zone.
     Sizing must fit the whole platform tier - Karpenter only provisions workload capacity, never this.
+    ami runs a custom AL2023 image instead of the EKS-published one: owners (required) plus exactly one of id or name
+    (an EC2 name filter, newest match wins; "{kubernetes_version}" is replaced by the cluster version), with optional
+    user_data_parts appended to the module-rendered nodeadm bootstrap - see the node-group module for the full
+    contract. Switching between the EKS AMI and a custom one REPLACES the group destroy-then-create, taking the
+    platform tier down until the new group is up; the node-group module docs describe a zero-gap bridge (a temporary
+    role=system node_groups entry). Moving between custom images is an ordinary rolling update.
   EOT
   type = object({
     instance_types = optional(list(string), ["m7i.large"])
@@ -180,6 +186,15 @@ variable "system_node_group" {
     max_size       = optional(number, 4)
     desired_size   = optional(number, 2)
     disk_size_gib  = optional(number, 50)
+    ami = optional(object({
+      owners = list(string)
+      id     = optional(string)
+      name   = optional(string)
+      user_data_parts = optional(list(object({
+        content_type = optional(string, "application/node.eks.aws")
+        content      = string
+      })), [])
+    }))
   })
   nullable = false
   default  = {}
@@ -197,7 +212,8 @@ variable "node_groups" {
     pools with extra security groups, or Windows nodes.
     Each group takes the system_node_group sizing arguments plus: security_group_ids, attached to the group's nodes
     through its launch template alongside the EKS-managed cluster security group every node wears; ami_type,
-    selecting the AMI family (null is the EKS AL2023 default); labels and taints for scheduling.
+    selecting the AMI family (null is the EKS AL2023 default); ami, a custom AL2023 image in place of ami_type (the
+    system_node_group shape - the two are mutually exclusive); labels and taints for scheduling.
     Linux groups get the Cilium agent-not-ready bootstrap taint automatically, exactly like the system group.
     WINDOWS_* groups instead run the AMI's bundled vpc-shared-eni CNI (Cilium has no Windows datapath): they join
     through a dedicated windows node role and EC2_WINDOWS access entry this module creates on demand, they skip the
@@ -214,7 +230,16 @@ variable "node_groups" {
     disk_size_gib      = optional(number, 50)
     security_group_ids = optional(set(string), [])
     ami_type           = optional(string)
-    labels             = optional(map(string), {})
+    ami = optional(object({
+      owners = list(string)
+      id     = optional(string)
+      name   = optional(string)
+      user_data_parts = optional(list(object({
+        content_type = optional(string, "application/node.eks.aws")
+        content      = string
+      })), [])
+    }))
+    labels = optional(map(string), {})
     taints = optional(list(object({
       key    = string
       value  = optional(string)
@@ -232,6 +257,11 @@ variable "node_groups" {
   validation {
     condition     = alltrue([for name in keys(var.node_groups) : can(regex("^[a-z]([a-z0-9-]{0,36})$", name))])
     error_message = "node_groups keys must be short lowercase RFC-1035 labels (they prefix the node group and launch template names)."
+  }
+
+  validation {
+    condition     = alltrue([for group in values(var.node_groups) : group.ami == null || group.ami_type == null])
+    error_message = "node_groups entries must not set both ami and ami_type - a custom AMI carries no EKS AMI type."
   }
 }
 
@@ -266,16 +296,31 @@ variable "karpenter" {
 
     There is deliberately no min_nodes: Karpenter scales from zero on pending pods and offers only ceilings
     (spec.limits). The cluster's floor is system_node_group.min_size.
+
+    node_pool.ami selects a custom AL2023 image instead of ami_alias (it wins when set, so the alias default never
+    needs clearing): owners (required) plus exactly one of id or name, published as KARPENTER_AMI_SELECTOR_TERMS with
+    KARPENTER_AMI_FAMILY=AL2023. An id is checked against owners at plan time and pins the image; a name (EC2 name
+    filter, "{kubernetes_version}" replaced by the cluster version) becomes one name+owner selector term per owner,
+    which Karpenter resolves at runtime - the newest match per architecture, drifting nodes onto a newer image as it
+    lands. kms_key_arns grants the controller the KMS access an encrypted image's customer-managed key needs (the
+    key's own policy must allow it too). Karpenter renders the nodeadm bootstrap itself, so there are no
+    user_data_parts here.
   EOT
   type = object({
     node_pool = optional(object({
-      name                 = optional(string, "default")
-      instance_categories  = optional(list(string), ["c", "m", "r"])
-      instance_families    = optional(list(string), [])
-      instance_sizes       = optional(list(string), ["large", "xlarge", "2xlarge"])
-      capacity_types       = optional(list(string), ["spot", "on-demand"])
-      architectures        = optional(list(string), ["amd64"])
-      ami_alias            = optional(string, "al2023@latest")
+      name                = optional(string, "default")
+      instance_categories = optional(list(string), ["c", "m", "r"])
+      instance_families   = optional(list(string), [])
+      instance_sizes      = optional(list(string), ["large", "xlarge", "2xlarge"])
+      capacity_types      = optional(list(string), ["spot", "on-demand"])
+      architectures       = optional(list(string), ["amd64"])
+      ami_alias           = optional(string, "al2023@latest")
+      ami = optional(object({
+        owners       = list(string)
+        id           = optional(string)
+        name         = optional(string)
+        kms_key_arns = optional(set(string), [])
+      }))
       max_nodes            = optional(number, 20)
       max_cpu              = optional(number, 64)
       max_memory_gib       = optional(number, 256)
@@ -310,6 +355,16 @@ variable "karpenter" {
   validation {
     condition     = length(var.karpenter.node_pool.instance_categories) > 0 || length(var.karpenter.node_pool.instance_families) > 0
     error_message = "karpenter.node_pool must select instances by category or by family - both cannot be empty."
+  }
+
+  validation {
+    condition     = var.karpenter.node_pool.ami == null || length(coalesce(try(var.karpenter.node_pool.ami.owners, null), [])) > 0
+    error_message = "karpenter.node_pool.ami.owners must name at least one owner - an AMI is only trusted when its owner is pinned."
+  }
+
+  validation {
+    condition     = var.karpenter.node_pool.ami == null || (try(var.karpenter.node_pool.ami.id, null) == null) != (try(var.karpenter.node_pool.ami.name, null) == null)
+    error_message = "karpenter.node_pool.ami must set exactly one of id or name."
   }
 }
 

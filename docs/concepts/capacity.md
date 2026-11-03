@@ -12,6 +12,11 @@ so consolidation never evicts the controllers that run the cluster.
 `system_node_group` sets its instance types, capacity type, size and disk. Its `min_size` is **the cluster's floor**,
 since Karpenter has no minimum. Counts are cluster-wide totals, not per availability zone.
 
+`system_node_group.ami` runs a custom AL2023 image instead of the EKS one: `owners` plus an `id` or a `name` pattern.
+See [Custom AMIs](../modules/node-group.md#custom-amis). Switching an existing system group between the EKS AMI and a
+custom one replaces it, which takes the platform tier down unless you
+[bridge it](../modules/node-group.md#switching-between-eks-and-custom-amis).
+
 ## Karpenter
 
 Karpenter isn't an EKS add-on: it's in neither the AWS nor the community catalogue. The only AWS-managed Karpenter is
@@ -38,10 +43,33 @@ side with `splitList`.
 | --------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Selection | `instance_categories`, `instance_families`, `instance_sizes`, `capacity_types`, `architectures` | `c,m,r` · any family · `large`–`2xlarge` · spot then on-demand · `amd64` |
 | Ceilings  | `max_nodes`, `max_cpu`, `max_memory_gib`, `disk_size_gib`                                       | 20 nodes · 64 vCPU · 256 GiB · 100 GiB disk                              |
-| Lifecycle | `ami_alias`, `consolidation_policy`, `consolidate_after`, `expire_after`                        | `al2023@latest` · `WhenEmptyOrUnderutilized` · `1m` · `720h`             |
+| Lifecycle | `ami_alias` or `ami`, `consolidation_policy`, `consolidate_after`, `expire_after`               | `al2023@latest` · `WhenEmptyOrUnderutilized` · `1m` · `720h`             |
 
 There's deliberately no `min_nodes`. Karpenter scales from zero on pending pods and offers only ceilings
 (`spec.limits`).
+
+### Custom AMIs for Karpenter
+
+`karpenter.node_pool.ami` selects a custom AL2023 image instead of `ami_alias`. When it's set it wins, so the alias
+default never needs clearing. The selection is published whole as `KARPENTER_AMI_SELECTOR_TERMS`, a JSON
+`amiSelectorTerms` list, with `KARPENTER_AMI_FAMILY=AL2023` (Karpenter needs an explicit family for any selector other
+than an alias). `KARPENTER_AMI_ALIAS` is then empty.
+
+| `ami`             | Published terms                                                     | Resolved                                                   |
+| ----------------- | ------------------------------------------------------------------- | ---------------------------------------------------------- |
+| unset             | `[{"alias": "<ami_alias>"}]`                                        | By Karpenter, from the EKS-published SSM parameter         |
+| `owners` + `id`   | `[{"id": "<id>"}]`                                                  | Pinned; the owner is checked at plan time                  |
+| `owners` + `name` | `[{"name": "<name>", "owner": "<owner>"}, ...]`, one term per owner | By Karpenter at runtime: the newest match per architecture |
+
+Karpenter forbids combining `id` with any other field in a term, so Terraform checks an id's owner itself and fails the
+plan if the image isn't owned by `owners`. A name term is resolved by Karpenter, which drifts nodes onto a newer
+matching image as it lands. That's the same lifecycle as `al2023@latest`, so one pattern can cover both architectures.
+As in node groups, `{kubernetes_version}` in `name` is replaced with the cluster's version. Karpenter renders the
+nodeadm bootstrap itself, so there's no `user_data_parts` here.
+
+`kms_key_arns` names the customer-managed keys an encrypted image's snapshots use. The controller launches nodes as its
+own role, so it's granted `Decrypt`, `DescribeKey`, `GenerateDataKeyWithoutPlaintext`, `ReEncrypt*` and `CreateGrant`
+(for AWS resources only) on exactly those keys. The key's own policy must allow this as well.
 
 ### Interruption handling
 
@@ -54,7 +82,9 @@ account's EventBridge rules can write to the queue, so nobody elsewhere can inje
 The controller role is scoped so a compromised controller can do little harm:
 
 - It can launch only resources tagged as owned by **this** cluster.
-- Discovery (instance types, subnets, security groups) and the EKS-published AMI ids in SSM are read-only lookups.
+- Discovery (instance types, subnets, security groups, images) and the EKS-published AMI ids in SSM are read-only
+  lookups.
+- KMS access exists only for the keys named in `node_pool.ami.kms_key_arns`, and grants only for AWS resources.
 - `iam:PassRole` is limited to the Karpenter node role, and only to EC2. The controller can't launch instances with a
   more privileged identity.
 - It manages the instance profile for its `EC2NodeClass` itself.
@@ -63,7 +93,8 @@ The controller role is scoped so a compromised controller can do little harm:
 
 `node_groups` adds managed node groups for what Karpenter can't express, such as nodes with extra security groups or
 Windows nodes. Each goes through the [node-group](../modules/node-group.md) module, carries the Cilium bootstrap taint
-(except on Windows) and joins through the shared Linux node role.
+(except on Windows) and joins through the shared Linux node role. A group can run a custom AL2023 image through `ami`
+instead of `ami_type`. See [Custom AMIs](../modules/node-group.md#custom-amis).
 
 `WINDOWS_*` AMI types get a separate node role. An IAM principal can carry only one EKS access entry, and Windows nodes
 join through `EC2_WINDOWS` while Linux nodes join through `EC2_LINUX`. The Windows role has the same managed policies

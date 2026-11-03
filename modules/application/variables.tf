@@ -42,6 +42,9 @@ variable "cluster" {
       - node_role_arn / node_subnet_ids / cluster_security_group_id: the Linux node role (admitted through the
         cluster root's EC2_LINUX access entry), the node subnets and the EKS-managed cluster security group that
         node_groups join with. Optional so an older application_target still plans; node_groups requires them.
+      - version / endpoint / certificate_authority / service_cidr: the Kubernetes version, API endpoint, base64
+        certificate authority and service CIDR a node group's custom ami bootstraps from. Optional for the same
+        reason; a node group with ami requires them.
   EOT
   type = object({
     name              = string
@@ -57,6 +60,11 @@ variable "cluster" {
     node_role_arn             = optional(string)
     node_subnet_ids           = optional(set(string), [])
     cluster_security_group_id = optional(string)
+
+    version               = optional(string)
+    endpoint              = optional(string)
+    certificate_authority = optional(string)
+    service_cidr          = optional(string)
   })
   nullable = false
 
@@ -223,9 +231,11 @@ variable "node_groups" {
     <name>-<key> (a name prefix, so a replacement never collides with the group it supersedes), joins with the
     cluster's Linux node role into its node subnets wearing the EKS-managed cluster security group, and takes the
     cluster root's node_groups sizing arguments plus ami_type (null is the EKS AL2023 default for the instance
-    architecture; AL2023_ARM_64_STANDARD for Graviton), labels and taints. Every group gets the Cilium
-    agent-not-ready bootstrap taint exactly as the cluster root's groups do; add a taint of your own to keep other
-    workloads off it. Linux only: Windows groups need the cluster root's windows node role.
+    architecture; AL2023_ARM_64_STANDARD for Graviton) or ami (a custom AL2023 image instead of ami_type - the cluster
+    root's system_node_group shape: owners plus exactly one of id or name, and optional user_data_parts), labels and
+    taints. Every group gets the Cilium agent-not-ready bootstrap taint exactly as the cluster root's groups do; add a
+    taint of your own to keep other workloads off it. Linux only: Windows groups need the cluster root's windows node
+    role.
   EOT
   type = map(object({
     instance_types = optional(list(string), ["m7i.large"])
@@ -235,7 +245,16 @@ variable "node_groups" {
     desired_size   = optional(number, 2)
     disk_size_gib  = optional(number, 50)
     ami_type       = optional(string)
-    labels         = optional(map(string), {})
+    ami = optional(object({
+      owners = list(string)
+      id     = optional(string)
+      name   = optional(string)
+      user_data_parts = optional(list(object({
+        content_type = optional(string, "application/node.eks.aws")
+        content      = string
+      })), [])
+    }))
+    labels = optional(map(string), {})
     taints = optional(list(object({
       key    = string
       value  = optional(string)
@@ -258,6 +277,16 @@ variable "node_groups" {
   validation {
     condition     = length(var.node_groups) == 0 || (var.cluster.node_role_arn != null && var.cluster.cluster_security_group_id != null && length(var.cluster.node_subnet_ids) > 0)
     error_message = "node_groups needs cluster.node_role_arn, cluster.node_subnet_ids and cluster.cluster_security_group_id - pass an application_target from a cluster module that publishes them."
+  }
+
+  validation {
+    condition     = alltrue([for group in values(var.node_groups) : group.ami == null || group.ami_type == null])
+    error_message = "node_groups entries must not set both ami and ami_type - a custom AMI carries no EKS AMI type."
+  }
+
+  validation {
+    condition     = alltrue([for group in values(var.node_groups) : group.ami == null]) || (var.cluster.version != null && var.cluster.endpoint != null && var.cluster.certificate_authority != null && var.cluster.service_cidr != null)
+    error_message = "a node group with ami needs cluster.version, cluster.endpoint, cluster.certificate_authority and cluster.service_cidr - pass an application_target from a cluster module that publishes them."
   }
 }
 

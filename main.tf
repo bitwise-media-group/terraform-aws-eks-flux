@@ -387,6 +387,12 @@ locals {
     value  = "true"
     effect = "NO_EXECUTE"
   }]
+
+  # A custom AMI's nodes bootstrap from a NodeConfig the node-group module
+  # renders, so they need the cluster facts EKS would otherwise inject. try():
+  # both are only populated by the real API, so mocked plans see null.
+  cluster_certificate_authority = try(aws_eks_cluster.main.certificate_authority[0].data, null)
+  cluster_service_cidr          = try(aws_eks_cluster.main.kubernetes_network_config[0].service_ipv4_cidr, null)
 }
 
 module "system_node_group" {
@@ -404,6 +410,12 @@ module "system_node_group" {
   max_size       = var.system_node_group.max_size
   desired_size   = var.system_node_group.desired_size
   disk_size_gib  = var.system_node_group.disk_size_gib
+  ami            = var.system_node_group.ami
+
+  kubernetes_version            = aws_eks_cluster.main.version
+  cluster_endpoint              = aws_eks_cluster.main.endpoint
+  cluster_certificate_authority = local.cluster_certificate_authority
+  cluster_service_cidr          = local.cluster_service_cidr
 
   labels = local.system_node_selector
   taints = local.cilium_bootstrap_taint
@@ -439,6 +451,12 @@ module "node_group" {
   desired_size   = each.value.desired_size
   disk_size_gib  = each.value.disk_size_gib
   ami_type       = each.value.ami_type
+  ami            = each.value.ami
+
+  kubernetes_version            = aws_eks_cluster.main.version
+  cluster_endpoint              = aws_eks_cluster.main.endpoint
+  cluster_certificate_authority = local.cluster_certificate_authority
+  cluster_service_cidr          = local.cluster_service_cidr
 
   labels = each.value.labels
   taints = concat(

@@ -288,6 +288,58 @@ run "no_windows_machinery_by_default" {
   }
 }
 
+# The wiring a custom-AMI node group bootstraps from. A full custom-AMI plan of
+# the system group cannot run here: the mocked cluster leaves the
+# kubernetes_network_config block empty (overrides and mock defaults cannot
+# populate an absent optional+computed block), so the service CIDR is always
+# null under mocks and the node-group module rightly refuses it. The module's
+# own suite covers the lookup and the rendered bootstrap.
+run "custom_ami_bootstrap_facts" {
+  command = plan
+
+  override_resource {
+    target          = aws_eks_cluster.main
+    override_during = plan
+    values = {
+      version  = "1.33"
+      endpoint = "https://ABCDEF0123456789ABCDEF0123456789ABCDEF01.gr7.eu-west-2.eks.amazonaws.com"
+      certificate_authority = [{
+        data = "Q0EtREFUQQ=="
+      }]
+      identity = [{
+        oidc = [{
+          issuer = "https://oidc.eks.eu-west-2.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+        }]
+      }]
+    }
+  }
+
+  assert {
+    condition     = output.application_target.version == "1.33" && output.application_target.endpoint == aws_eks_cluster.main.endpoint && output.application_target.certificate_authority == "Q0EtREFUQQ=="
+    error_message = "application_target must publish the facts an application's custom-AMI groups bootstrap from"
+  }
+
+  assert {
+    condition     = module.system_node_group.ami_id == null
+    error_message = "the system group stays on the EKS AMI unless system_node_group.ami is set"
+  }
+}
+
+run "node_groups_reject_ami_with_ami_type" {
+  command = plan
+
+  variables {
+    node_groups = {
+      golden = {
+        ami      = { owners = ["111122223333"], id = "ami-0golden" }
+        ami_type = "AL2023_x86_64_STANDARD"
+      }
+    }
+  }
+
+  expect_failures = [var.node_groups]
+}
+
 run "node_groups_reject_the_system_key" {
   command = plan
 
@@ -600,6 +652,114 @@ run "karpenter_node_pool_shape" {
     condition     = aws_eks_access_entry.karpenter_node.type == "EC2_LINUX"
     error_message = "Karpenter-launched nodes need an EC2_LINUX access entry to join"
   }
+}
+
+run "karpenter_ami_defaults_to_the_alias" {
+  command = plan
+
+  assert {
+    condition     = jsondecode(local.reserved_cluster_vars.KARPENTER_AMI_SELECTOR_TERMS) == [{ alias = "al2023@latest" }] && local.reserved_cluster_vars.KARPENTER_AMI_FAMILY == "" && local.reserved_cluster_vars.KARPENTER_AMI_ALIAS == "al2023@latest"
+    error_message = "with no custom AMI the selector is the alias alone, with no family (the alias implies it)"
+  }
+
+  assert {
+    condition     = length(data.aws_ami.karpenter) == 0 && !contains([for statement in data.aws_iam_policy_document.karpenter_controller.statement : statement.sid], "EncryptedAMIKeys")
+    error_message = "no image lookup and no KMS grant exist without a custom AMI"
+  }
+}
+
+run "karpenter_custom_ami_by_name" {
+  command = plan
+
+  override_resource {
+    target          = aws_eks_cluster.main
+    override_during = plan
+    values = {
+      version = "1.33"
+      identity = [{
+        oidc = [{
+          issuer = "https://oidc.eks.eu-west-2.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+        }]
+      }]
+    }
+  }
+
+  variables {
+    karpenter = {
+      node_pool = {
+        ami = {
+          owners       = ["111122223333", "444455556666"]
+          name         = "acme-eks-{kubernetes_version}-*"
+          kms_key_arns = ["arn:aws:kms:eu-west-2:111122223333:key/0000-golden"]
+        }
+      }
+    }
+  }
+
+  assert {
+    condition = jsondecode(local.reserved_cluster_vars.KARPENTER_AMI_SELECTOR_TERMS) == [
+      { name = "acme-eks-1.33-*", owner = "111122223333" },
+      { name = "acme-eks-1.33-*", owner = "444455556666" },
+    ]
+    error_message = "a name selector becomes one name+owner term per owner, with {kubernetes_version} replaced"
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.KARPENTER_AMI_FAMILY == "AL2023" && local.reserved_cluster_vars.KARPENTER_AMI_ALIAS == ""
+    error_message = "a custom selector needs amiFamily AL2023 and must clear the alias so the manifests cannot render both"
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in data.aws_iam_policy_document.karpenter_controller.statement :
+      statement.resources == toset(["arn:aws:kms:eu-west-2:111122223333:key/0000-golden"])
+      if contains(["EncryptedAMIKeys", "EncryptedAMIKeyGrants"], statement.sid)
+    ]) && length([for statement in data.aws_iam_policy_document.karpenter_controller.statement : statement if startswith(coalesce(statement.sid, ""), "EncryptedAMIKey")]) == 2
+    error_message = "kms_key_arns must grant the controller use of exactly those keys"
+  }
+}
+
+run "karpenter_custom_ami_by_id" {
+  command = plan
+
+  override_data {
+    target = data.aws_ami.karpenter[0]
+    values = {
+      id = "ami-0golden"
+    }
+  }
+
+  variables {
+    karpenter = {
+      node_pool = {
+        ami = { owners = ["111122223333"], id = "ami-0golden" }
+      }
+    }
+  }
+
+  assert {
+    condition     = jsondecode(local.reserved_cluster_vars.KARPENTER_AMI_SELECTOR_TERMS) == [{ id = "ami-0golden" }]
+    error_message = "an id selector is the id alone - Karpenter forbids combining id with other fields, so the owner is checked at plan time"
+  }
+
+  assert {
+    condition     = data.aws_ami.karpenter[0].owners == tolist(["111122223333"])
+    error_message = "the id must be looked up against the pinned owners"
+  }
+}
+
+run "karpenter_ami_rejects_id_and_name" {
+  command = plan
+
+  variables {
+    karpenter = {
+      node_pool = {
+        ami = { owners = ["111122223333"], id = "ami-0golden", name = "acme-*" }
+      }
+    }
+  }
+
+  expect_failures = [var.karpenter]
 }
 
 run "empty_election_publishes_none" {

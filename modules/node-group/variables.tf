@@ -121,11 +121,123 @@ variable "ami_type" {
   }
 }
 
+variable "ami" {
+  description = <<-EOT
+    A custom AL2023 AMI in place of the EKS-published one picked by ami_type (the two are mutually exclusive). The
+    image is resolved at plan time and must be owned by one of owners (account ids, or self / amazon /
+    aws-marketplace) - this check also applies to an explicit id, so an image from an unexpected account fails the plan.
+    Set exactly one of:
+      - id: the exact image id. Pins the image - nodes only roll when the id changes.
+      - name: an EC2 name filter (* wildcards), with the newest match taking effect. "{kubernetes_version}" is
+        replaced by kubernetes_version, so a pattern such as "acme-eks-{kubernetes_version}-*" follows the
+        cluster through upgrades. A newer matching image produces a new launch template version - and a rolling node
+        update - on the next apply.
+    EKS merges no bootstrap user data into a custom image, so the module renders it: a nodeadm NodeConfig (cluster
+    endpoint, certificate authority and service CIDR) whose kubelet flags register the group's labels and taints, so
+    a taint such as Cilium's agent-not-ready is present the moment the node registers. user_data_parts are appended
+    to that MIME document - extra NodeConfigs (application/node.eks.aws, merged by nodeadm) or any content type
+    cloud-init understands (text/x-shellscript, text/cloud-config, ...).
+    Switching between an EKS AMI and a custom one replaces the node group (destroy-then-create).
+  EOT
+  type = object({
+    owners = list(string)
+    id     = optional(string)
+    name   = optional(string)
+    user_data_parts = optional(list(object({
+      content_type = optional(string, "application/node.eks.aws")
+      content      = string
+    })), [])
+  })
+  nullable = true
+  default  = null
+
+  validation {
+    condition     = var.ami == null || length(coalesce(try(var.ami.owners, null), [])) > 0
+    error_message = "ami.owners must name at least one owner - an AMI is only trusted when its owner is pinned."
+  }
+
+  validation {
+    condition     = var.ami == null || (try(var.ami.id, null) == null) != (try(var.ami.name, null) == null)
+    error_message = "ami must set exactly one of id or name."
+  }
+
+  validation {
+    condition     = var.ami == null || var.ami_type == null
+    error_message = "ami and ami_type are mutually exclusive - a custom AMI carries no EKS AMI type."
+  }
+}
+
+variable "kubernetes_version" {
+  description = <<-EOT
+    The cluster's Kubernetes version (e.g. "1.33"), substituted for "{kubernetes_version}" in ami.name. Required only
+    when ami.name uses the placeholder.
+  EOT
+  type        = string
+  nullable    = true
+  default     = null
+
+  validation {
+    condition     = var.kubernetes_version != null || !strcontains(try(var.ami.name, null) == null ? "" : var.ami.name, "{kubernetes_version}")
+    error_message = "kubernetes_version is required when ami.name uses the {kubernetes_version} placeholder."
+  }
+}
+
+variable "cluster_endpoint" {
+  description = "The cluster's API server endpoint, rendered into a custom AMI's NodeConfig. Required when ami is set."
+  type        = string
+  nullable    = true
+  default     = null
+
+  validation {
+    condition     = var.ami == null || var.cluster_endpoint != null
+    error_message = "cluster_endpoint is required when ami is set - a custom AMI's nodes bootstrap from the module-rendered NodeConfig."
+  }
+}
+
+variable "cluster_certificate_authority" {
+  description = <<-EOT
+    The cluster's base64-encoded certificate authority data, rendered into a custom AMI's NodeConfig. Required when ami
+    is set.
+  EOT
+  type        = string
+  nullable    = true
+  default     = null
+
+  validation {
+    condition     = var.ami == null || var.cluster_certificate_authority != null
+    error_message = "cluster_certificate_authority is required when ami is set - a custom AMI's nodes bootstrap from the module-rendered NodeConfig."
+  }
+}
+
+variable "cluster_service_cidr" {
+  description = "The cluster's Kubernetes service CIDR, rendered into a custom AMI's NodeConfig. Required when ami is set."
+  type        = string
+  nullable    = true
+  default     = null
+
+  validation {
+    condition     = var.ami == null || var.cluster_service_cidr != null
+    error_message = "cluster_service_cidr is required when ami is set - a custom AMI's nodes bootstrap from the module-rendered NodeConfig."
+  }
+}
+
 variable "labels" {
-  description = "Kubernetes labels applied to every node in the group."
+  description = <<-EOT
+    Kubernetes labels applied to every node in the group. With a custom ami the kubelet also registers them itself, so
+    keys in the kubernetes.io / k8s.io namespaces are refused (the NodeRestriction admission plugin stops a kubelet
+    from self-applying them) - except node.kubernetes.io/ and kubelet.kubernetes.io/, which it allows.
+  EOT
   type        = map(string)
   nullable    = false
   default     = {}
+
+  validation {
+    condition = var.ami == null || alltrue([
+      for key in keys(var.labels) :
+      !can(regex("(^|\\.)(kubernetes|k8s)\\.io/", key)) || can(regex("^([a-z0-9.-]+\\.)?(kubelet|node)\\.kubernetes\\.io/", key))
+    ])
+    error_message = "With a custom ami, labels must not use the kubernetes.io or k8s.io namespaces (other than node.kubernetes.io/ and kubelet.kubernetes.io/) - the kubelet cannot self-apply them."
+  }
 }
 
 variable "taints" {

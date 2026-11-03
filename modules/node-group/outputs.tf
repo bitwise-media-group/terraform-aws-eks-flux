@@ -33,3 +33,8 @@ output "launch_template" {
     version = aws_launch_template.main.latest_version
   }
 }
+
+output "ami_id" {
+  description = "The custom AMI the group runs (ami), resolved to its image id; null when EKS picks the AMI for ami_type."
+  value       = local.custom_ami ? data.aws_ami.custom[0].id : null
+}

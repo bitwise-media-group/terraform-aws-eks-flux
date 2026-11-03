@@ -62,6 +62,7 @@ refuses a release or a namespace another release owns, and IAM refuses a duplica
 | `oidc_provider_arn`, `oidc_issuer`                              | The secret reader roles' IRSA trust                                                                                                                                        |
 | `secret_prefix`                                                 | The secret reader roles' `GetSecretValue` scope, `${SECRET_PREFIX}*`                                                                                                       |
 | `node_role_arn`, `node_subnet_ids`, `cluster_security_group_id` | How `node_groups` join: the shared Linux node role, the node subnets and the cluster security group. Optional, so an older target still plans; `node_groups` requires them |
+| `version`, `endpoint`, `certificate_authority`, `service_cidr`  | What a custom-AMI node group bootstraps from (nodeadm). Optional, so an older target still plans; a `node_groups` entry with `ami` requires them                           |
 
 The image's validations run against it, so an ECR image outside `platform_registry`, a keyed image on a keyless cluster
 and a pull secret on the platform registry all fail at plan.
@@ -73,7 +74,8 @@ architecture only the application's pods tolerate. Each group joins the way the 
 with the shared Linux node role (the root's `EC2_LINUX` access entry already admits it), the node subnets and the
 EKS-managed cluster security group. It also gets the Cilium `agent-not-ready` bootstrap taint ahead of the application's
 own taints. Add a taint of your own to keep everything else off the group. Groups are Linux only, because Windows nodes
-need the root's Windows node role.
+need the root's Windows node role. A group can run a custom AL2023 image through `ami` instead of `ami_type`. See
+[Custom AMIs](node-group.md#custom-amis).
 
 ### Dex clients
 

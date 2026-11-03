@@ -135,6 +135,12 @@ module "node_group" {
   desired_size   = each.value.desired_size
   disk_size_gib  = each.value.disk_size_gib
   ami_type       = each.value.ami_type
+  ami            = each.value.ami
+
+  kubernetes_version            = var.cluster.version
+  cluster_endpoint              = var.cluster.endpoint
+  cluster_certificate_authority = var.cluster.certificate_authority
+  cluster_service_cidr          = var.cluster.service_cidr
 
   labels = each.value.labels
   taints = concat(

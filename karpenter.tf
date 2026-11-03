@@ -15,6 +15,24 @@
 
 locals {
   karpenter_node_pool = var.karpenter.node_pool
+  karpenter_ami       = local.karpenter_node_pool.ami
+
+  karpenter_ami_name = try(replace(local.karpenter_ami.name, "{kubernetes_version}", aws_eks_cluster.main.version), null)
+
+  # The EC2NodeClass amiSelectorTerms, published whole as JSON (each branch
+  # is encoded on its own: the term shapes differ). Karpenter forbids
+  # combining id with any other field in a term, so an id's owner is checked
+  # through data.aws_ami.karpenter instead; a name becomes one name+owner term
+  # per owner (terms OR together), resolved by Karpenter at runtime.
+  karpenter_ami_selector_terms = (
+    local.karpenter_ami == null ? jsonencode([{ alias = local.karpenter_node_pool.ami_alias }]) :
+    local.karpenter_ami.id != null ? jsonencode([{ id = data.aws_ami.karpenter[0].id }]) :
+    jsonencode([for owner in local.karpenter_ami.owners : { name = local.karpenter_ami_name, owner = owner }])
+  )
+
+  # An alias implies its family; any other selector needs spec.amiFamily, and
+  # custom images are AL2023 only.
+  karpenter_ami_family = local.karpenter_ami == null ? "" : "AL2023"
 
   # Subnets and security groups Karpenter (and the load-balancer controller)
   # discover by tag. The VPC is owned upstream, so tagging is opt-out.
@@ -22,6 +40,38 @@ locals {
     var.network.node_subnet_ids,
     var.network.public_subnet_ids,
   ) : []
+}
+
+# Fails the plan early when the custom image is unowned by owners or matches
+# nothing - otherwise the first sign would be Karpenter refusing to launch.
+data "aws_ami" "karpenter" {
+  count = local.karpenter_ami != null ? 1 : 0
+
+  owners      = local.karpenter_ami.owners
+  most_recent = true
+
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+
+  dynamic "filter" {
+    for_each = local.karpenter_ami.id != null ? [local.karpenter_ami.id] : []
+
+    content {
+      name   = "image-id"
+      values = [filter.value]
+    }
+  }
+
+  dynamic "filter" {
+    for_each = local.karpenter_ami_name != null ? [local.karpenter_ami_name] : []
+
+    content {
+      name   = "name"
+      values = [filter.value]
+    }
+  }
 }
 
 resource "aws_ec2_tag" "discovery" {
@@ -313,6 +363,45 @@ data "aws_iam_policy_document" "karpenter_controller" {
     ]
 
     resources = [aws_sqs_queue.karpenter_interruption.arn]
+  }
+
+  # An encrypted custom image's snapshots are under a customer-managed key,
+  # and the fleet launch runs as this role - so it needs the key to create the
+  # nodes' volumes. Grants are for AWS resources (EBS) only.
+  dynamic "statement" {
+    for_each = length(try(local.karpenter_ami.kms_key_arns, [])) > 0 ? [local.karpenter_ami.kms_key_arns] : []
+
+    content {
+      sid    = "EncryptedAMIKeys"
+      effect = "Allow"
+
+      actions = [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:GenerateDataKeyWithoutPlaintext",
+        "kms:ReEncryptFrom",
+        "kms:ReEncryptTo",
+      ]
+
+      resources = statement.value
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(try(local.karpenter_ami.kms_key_arns, [])) > 0 ? [local.karpenter_ami.kms_key_arns] : []
+
+    content {
+      sid       = "EncryptedAMIKeyGrants"
+      effect    = "Allow"
+      actions   = ["kms:CreateGrant"]
+      resources = statement.value
+
+      condition {
+        test     = "Bool"
+        variable = "kms:GrantIsForAWSResource"
+        values   = ["true"]
+      }
+    }
   }
 }
 

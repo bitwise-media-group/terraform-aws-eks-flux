@@ -1,0 +1,15 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="//"
+
+--//
+Content-Type: application/node.eks.aws
+
+${node_config}
+%{ for part in parts ~}
+--//
+Content-Type: ${part.content_type}
+
+${trimsuffix(part.content, "\n")}
+
+%{ endfor ~}
+--//--

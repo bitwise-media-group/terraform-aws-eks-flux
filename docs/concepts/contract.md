@@ -105,14 +105,18 @@ they're off, so substitution never fails and the manifests can check for empties
 
 ### Karpenter
 
-| Group     | Keys                                                                                                                                              |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Wiring    | `KARPENTER_NODE_ROLE`, `KARPENTER_INTERRUPTION_QUEUE`, `KARPENTER_SERVICE_ACCOUNT`, `KARPENTER_NODE_POOL_NAME`                                    |
-| Selection | `KARPENTER_INSTANCE_CATEGORIES`, `KARPENTER_INSTANCE_FAMILIES`, `KARPENTER_INSTANCE_SIZES`, `KARPENTER_CAPACITY_TYPES`, `KARPENTER_ARCHITECTURES` |
-| Ceilings  | `KARPENTER_MAX_NODES`, `KARPENTER_CPU_LIMIT`, `KARPENTER_MEMORY_LIMIT`, `KARPENTER_NODE_DISK_GIB`                                                 |
-| Lifecycle | `KARPENTER_AMI_ALIAS`, `KARPENTER_CONSOLIDATION_POLICY`, `KARPENTER_CONSOLIDATE_AFTER`, `KARPENTER_EXPIRE_AFTER`                                  |
+| Group     | Keys                                                                                                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Wiring    | `KARPENTER_NODE_ROLE`, `KARPENTER_INTERRUPTION_QUEUE`, `KARPENTER_SERVICE_ACCOUNT`, `KARPENTER_NODE_POOL_NAME`                                                           |
+| Selection | `KARPENTER_INSTANCE_CATEGORIES`, `KARPENTER_INSTANCE_FAMILIES`, `KARPENTER_INSTANCE_SIZES`, `KARPENTER_CAPACITY_TYPES`, `KARPENTER_ARCHITECTURES`                        |
+| Ceilings  | `KARPENTER_MAX_NODES`, `KARPENTER_CPU_LIMIT`, `KARPENTER_MEMORY_LIMIT`, `KARPENTER_NODE_DISK_GIB`                                                                        |
+| Lifecycle | `KARPENTER_AMI_ALIAS`, `KARPENTER_AMI_SELECTOR_TERMS`, `KARPENTER_AMI_FAMILY`, `KARPENTER_CONSOLIDATION_POLICY`, `KARPENTER_CONSOLIDATE_AFTER`, `KARPENTER_EXPIRE_AFTER` |
 
-Selection lists are comma-joined. See [Capacity](capacity.md#the-nodepool-shape).
+Selection lists are comma-joined. See [Capacity](capacity.md#the-nodepool-shape). `KARPENTER_AMI_SELECTOR_TERMS` is the
+exception: it's the `EC2NodeClass`'s whole `amiSelectorTerms` list as JSON (read with `mustFromJson`, like
+`DEX_CLIENTS`). It's always set, to the alias term when no custom AMI is configured. `KARPENTER_AMI_FAMILY` is `AL2023`
+for a custom AMI and empty for an alias, and `KARPENTER_AMI_ALIAS` is empty for a custom AMI. See
+[Custom AMIs for Karpenter](capacity.md#custom-amis-for-karpenter).
 
 ### Adding your own
 

@@ -241,14 +241,18 @@ locals {
     # The default NodePool's shape. Lists arrive comma-joined and are expanded
     # manifests-side with splitList, exactly as STACK_COMPONENTS already is - 
     # cluster-vars is a flat string map, and this is the pattern the stack
-    # already proves.
+    # already proves. The AMI selector is the exception: amiSelectorTerms is a
+    # list of objects, so it arrives as JSON (mustFromJson manifests-side, as
+    # DEX_CLIENTS already is).
     KARPENTER_NODE_POOL_NAME       = local.node_pool.name
     KARPENTER_INSTANCE_CATEGORIES  = join(",", local.node_pool.instance_categories)
     KARPENTER_INSTANCE_FAMILIES    = join(",", local.node_pool.instance_families)
     KARPENTER_INSTANCE_SIZES       = join(",", local.node_pool.instance_sizes)
     KARPENTER_CAPACITY_TYPES       = join(",", local.node_pool.capacity_types)
     KARPENTER_ARCHITECTURES        = join(",", local.node_pool.architectures)
-    KARPENTER_AMI_ALIAS            = local.node_pool.ami_alias
+    KARPENTER_AMI_ALIAS            = local.karpenter_ami == null ? local.node_pool.ami_alias : ""
+    KARPENTER_AMI_SELECTOR_TERMS   = local.karpenter_ami_selector_terms
+    KARPENTER_AMI_FAMILY           = local.karpenter_ami_family
     KARPENTER_MAX_NODES            = tostring(local.node_pool.max_nodes)
     KARPENTER_CPU_LIMIT            = tostring(local.node_pool.max_cpu)
     KARPENTER_MEMORY_LIMIT         = "${local.node_pool.max_memory_gib}Gi"

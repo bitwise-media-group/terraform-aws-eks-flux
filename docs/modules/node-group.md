@@ -31,10 +31,11 @@ module "workers" {
 
 ## What it creates
 
-| Resource              | Carries                                                                                                                   |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `aws_launch_template` | What the managed-node-group API can't express: extra security groups, the gp3 root volume's size, IMDSv2                  |
-| `aws_eks_node_group`  | Everything the API expresses directly: instance types, capacity type, scaling, labels, taints, AMI type, node auto-repair |
+| Resource              | Carries                                                                                                                                                                 |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aws_launch_template` | What the managed-node-group API can't express: extra security groups, the gp3 root volume's size, IMDSv2, and (with `ami`) the custom image and its bootstrap user data |
+| `aws_eks_node_group`  | Everything the API expresses directly: instance types, capacity type, scaling, labels, taints, AMI type, node auto-repair                                               |
+| `terraform_data`      | The AMI mode (`eks` or `custom`), which replaces the group when it flips                                                                                                |
 
 ## How it works
 
@@ -42,7 +43,7 @@ module "workers" {
 comes along, because nodes need it to reach the control plane.
 
 **The root volume.** EKS picks the AMI for the `ami_type`, so the block-device mapping names that AMI family's root
-device rather than discovering it.
+device rather than discovering it. A custom `ami` is resolved by the module, so its root device is read off the image.
 
 **IMDSv2 only**, with a hop limit of 2. That matches the EKS default, so containers (one hop through the bridge) can
 still reach the node's metadata.
@@ -61,5 +62,88 @@ during the rare forced replacement.
 **Windows.** `WINDOWS_*` AMI types are supported. Pair them with a node role admitted through an `EC2_WINDOWS` access
 entry. An IAM principal carries exactly one access entry, so Windows nodes need a role separate from the Linux one. The
 cluster module handles this automatically for `node_groups`.
+
+## Custom AMIs
+
+`ami` runs a custom AL2023 image, such as a company's hardened "golden" image, instead of the one EKS picks for
+`ami_type`. The two are mutually exclusive. Nothing about the image is assumed: you name who owns it, then either the
+exact image or a name pattern.
+
+```hcl
+# Pinned: nodes only roll when the id changes.
+ami = {
+  owners = ["111122223333"]
+  id     = "ami-0123456789abcdef0"
+}
+
+# Tracking: the newest image matching the pattern, following the cluster's version.
+ami = {
+  owners = ["111122223333"]
+  name   = "acme-eks-{kubernetes_version}-*"
+}
+```
+
+**Owners are required, and they are checked.** The image is looked up at plan time against `owners` (account ids, or
+`self` / `amazon` / `aws-marketplace`). That applies to an explicit `id` too. An id from an unexpected account matches
+nothing and fails the plan instead of launching an untrusted image.
+
+**Name patterns.** `name` is an EC2 name filter (`*` wildcards) and the newest match wins. `{kubernetes_version}` is
+replaced with the cluster's version, so a pattern that encodes the version follows the cluster through upgrades. A newer
+matching image produces a new launch template version on the next apply, which means a rolling node update, just as an
+`@latest` alias would. Pin an `id` to freeze the image. Make the pattern specific enough to select one architecture: the
+lookup takes the single newest match, whatever instance types the group runs.
+
+**Bootstrap.** EKS merges no bootstrap user data into a custom image, so the module renders it as a MIME multipart
+document. The first part is a nodeadm `NodeConfig` carrying the cluster's name, API endpoint, certificate authority and
+service CIDR (the `cluster_*` inputs, which the cluster module passes). Its kubelet flags register the group's labels
+(`--node-labels`) and taints (`--register-with-taints`) at registration. EKS applies them afterwards as well, but only
+the kubelet can guarantee that a taint such as Cilium's `agent-not-ready` is present before the first pod lands. Because
+of this:
+
+- Labels in the `kubernetes.io` / `k8s.io` namespaces are refused, other than `node.kubernetes.io/` and
+  `kubelet.kubernetes.io/`. The NodeRestriction admission plugin stops a kubelet from applying them to itself.
+- Changing a custom-AMI group's labels or taints changes its user data, so it rolls the nodes, where on an EKS AMI it
+  would update them in place.
+
+`user_data_parts` are added after the module's part. An `application/node.eks.aws` part (the default content type) is
+another `NodeConfig` that nodeadm merges, for kubelet or containerd settings. Any other content type cloud-init
+understands (`text/x-shellscript`, `text/cloud-config`, ...) runs through cloud-init. The module's own part always comes
+first and can't be replaced.
+
+**No AMI type.** With a custom image the node group sets no `ami_type` (EKS refuses one alongside a launch template that
+names its own image) and reports `CUSTOM`.
+
+**Encrypted images.** If the image's snapshots are encrypted with a customer-managed KMS key, the key's policy must let
+the `AWSServiceRoleForAutoScaling` service-linked role use it. That role launches managed node group instances, and this
+module can't grant it anything. The key belongs to whoever publishes the image.
+
+### Switching between EKS and custom AMIs
+
+EKS can't move a node group between an EKS AMI and a custom one in place. The module tracks which kind it runs
+(`terraform_data.ami_mode`) and replaces the group when that changes, all in a single apply. Moving from one custom
+image to another, by id or by a newer name match, is not a switch. That stays an ordinary rolling update.
+
+The replacement is destroy-then-create, like every replacement here (see above). For an additional node group that's a
+short capacity gap. For the **system group** it takes the platform tier down (flux, Karpenter, CoreDNS, the Cilium
+operator) until the new group is up. Choose the system group's AMI kind when you create the cluster. To switch an
+existing cluster without a gap, bridge it. Platform pods pin to the system group only by the `role=system` label, so a
+temporary group carrying that label can hold them while the system group is replaced:
+
+1. Add a bridge group sized for the platform tier, then apply:
+
+   ```hcl
+   node_groups = {
+     system-bridge = {
+       labels       = { role = "system" }
+       ami          = { owners = ["111122223333"], name = "acme-eks-{kubernetes_version}-*" } # the target image
+       min_size     = 2
+       desired_size = 2
+     }
+   }
+   ```
+
+2. Set (or remove) `system_node_group.ami`, then apply. The system group is replaced, and its pods drain onto the
+   bridge.
+3. Remove `system-bridge`, then apply. The pods move back to the new system group as the bridge drains.
 
 --8<-- "modules/node-group/README.md:tf-docs"
