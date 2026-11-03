@@ -90,27 +90,6 @@ done
 [ -z "$failed" ]
 """
 
-# Zensical documentation site (Python via uv). `uv sync` provisions Python +
-# zensical from pyproject.toml/uv.lock; the built site/ is git-ignored. The
-# release workflow's docs job rebuilds it from the tag (keyed on zensical.toml)
-# and publishes it to GitHub Pages.
-[sync]
-hide = true
-dir = "{{config_root}}"
-run = "uv sync"
-
-[docs-build]
-description = "build the documentation site (zensical)"
-dir = "{{config_root}}"
-depends = ["sync"]
-run = "uv run zensical build"
-
-[serve]
-description = "serve the docs site locally (zensical)"
-dir = "{{config_root}}"
-depends = ["sync"]
-run = "uv run zensical serve"
-
 [build]
 description = "build the documentation site (zensical)"
 run = [{ task = "docs-build" }]
