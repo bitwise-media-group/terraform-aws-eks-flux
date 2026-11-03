@@ -60,8 +60,25 @@ never be removed and the group would never schedule a pod.
 EKS always creates an `eks-cluster-sg-*` group with allow-all egress and attaches it to the control-plane ENIs and every
 node. It can't be replaced or detached, only edited. With `network.restrict_default_security_group` on, the module:
 
-1. adds the documented minimum self-referencing egress rules (API server 443, kubelet 10250, DNS 53 TCP/UDP), then
+1. adds the egress a node needs to boot and run Cilium:
+   - all traffic to the group itself: the API server, the kubelets, DNS and node-to-node traffic. Pods hold VPC
+     addresses on the nodes' ENIs, so pod-to-pod traffic across nodes and Cilium's health checks use this rule too.
+   - HTTPS to the region's S3 prefix list, where ECR serves image layers.
+   - HTTPS to each group in `network.endpoint_security_group_ids`, the security groups on the VPC's interface endpoints.
 2. revokes the `0.0.0.0/0` and `::/0` egress rules through the AWS CLI.
+
+`network.endpoint_security_group_ids` is required with the restriction. Without it, a new node can't pull the Cilium
+image and the operator can't attach its ENIs, so the node never becomes Ready and its node group hangs in `CREATING`.
+The interface endpoints must cover these services, with private DNS on, and admit HTTPS from the nodes:
+
+| Endpoint             | Used by                                                    |
+| -------------------- | ---------------------------------------------------------- |
+| `ecr.api`, `ecr.dkr` | image pulls (the kubelet's credential provider and flux)   |
+| `sts`                | IRSA and the AWS SDKs' role assumption                     |
+| `ec2`                | the Cilium operator, which attaches ENIs and pod addresses |
+| `eks-auth`           | the Pod Identity agent                                     |
+
+Any other egress, such as another AWS API a workload calls or the internet, is a rule you add to the group yourself.
 
 Terraform can't delete rules on a group it doesn't manage, which is why this step uses the CLI. The step runs after the
 add-ons are `ACTIVE`. Bootstrap therefore behaves the same with the toggle on or off, and open egress closes only once

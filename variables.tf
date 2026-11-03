@@ -30,12 +30,17 @@ variable "network" {
     security_group_ids attach to the control-plane ENIs alongside the EKS-managed cluster security group - use
     them for caller-owned rules (e.g. API access from a bastion or VPN range).
     restrict_default_security_group revokes the allow-all egress rules (0.0.0.0/0 and ::/0) on the EKS-managed
-    cluster security group and pins the documented minimum self-rules there instead. The revoke runs the AWS CLI
-    on the apply host (it must be installed and authenticated as the provider identity, with
-    ec2:DescribeSecurityGroupRules and ec2:RevokeSecurityGroupEgress), fires once per cluster after bootstrap,
-    and is drift-blind: a manually re-added rule is not re-revoked, and toggling back off restores nothing.
-    Nodes wear that group, so only enable this where node egress (ECR and S3 pulls, the EKS and SSM APIs)
-    arrives through VPC endpoints or caller-added rules.
+    cluster security group, which every node and pod wears, and allows only what a node needs to boot and run
+    Cilium instead: all traffic to the group itself, HTTPS to the region's S3 prefix list (ECR image layers) and
+    HTTPS to each of endpoint_security_group_ids. The revoke runs the AWS CLI on the apply host (it must be
+    installed and authenticated as the provider identity, with ec2:DescribeSecurityGroupRules and
+    ec2:RevokeSecurityGroupEgress), fires once per cluster after bootstrap, and is drift-blind: a manually
+    re-added rule is not re-revoked, and toggling back off restores nothing.
+    endpoint_security_group_ids are the security groups on the VPC's interface endpoints, keyed by a static name
+    so a group created in the same apply can be named; required with restrict_default_security_group. The
+    endpoints must cover ecr.api, ecr.dkr, sts, ec2 (Cilium's ENI operator) and eks-auth (Pod Identity) with
+    private DNS on, and admit HTTPS from the nodes. Any other egress a workload needs (another AWS API, the
+    internet) is the caller's rule to add to the group.
   EOT
   type = object({
     vpc_id                          = string
@@ -46,12 +51,20 @@ variable "network" {
     manage_discovery_tags           = optional(bool, true)
     security_group_ids              = optional(set(string), [])
     restrict_default_security_group = optional(bool, false)
+    endpoint_security_group_ids     = optional(map(string), {})
   })
   nullable = false
 
   validation {
     condition     = length(var.network.node_subnet_ids) > 0
     error_message = "network.node_subnet_ids must name at least one private subnet for the system node group."
+  }
+
+  # Without the endpoints a restricted node cannot pull the Cilium image or
+  # attach ENIs: the node group hangs in CREATING instead of failing the plan.
+  validation {
+    condition     = !var.network.restrict_default_security_group || length(var.network.endpoint_security_group_ids) > 0
+    error_message = "network.restrict_default_security_group needs network.endpoint_security_group_ids: without egress to the ECR, STS, EC2 and EKS Auth endpoints no new node can become Ready."
   }
 }
 

@@ -575,8 +575,10 @@ resource "aws_eks_addon" "main" {
 # Restricting the EKS-managed cluster security group (opt-in). EKS always
 # creates eks-cluster-sg-* with allow-all egress and attaches it to the
 # control-plane ENIs and every node - it cannot be replaced or detached, only
-# edited. network.restrict_default_security_group pins the documented minimum
-# self-rules onto it and then revokes the 0.0.0.0/0 / ::/0 egress rules; EKS
+# edited. network.restrict_default_security_group swaps the open egress for
+# the paths a node needs to boot and run Cilium: the group itself, S3 (ECR
+# image layers) and the VPC's interface endpoints (ECR, STS, EC2, EKS Auth).
+# It adds those first and then revokes the 0.0.0.0/0 / ::/0 egress rules; EKS
 # re-adds only the self-referencing rules and tags on cluster update, so the
 # revoke sticks.
 #
@@ -586,26 +588,54 @@ resource "aws_eks_addon" "main" {
 # toggle on or off, and open egress is closed only once the cluster is up.
 # ---------------------------------------------------------------------------
 
-# The documented minimum egress for restricting cluster traffic: out to the
-# group itself only for the API server, the kubelets and DNS.
-locals {
-  cluster_self_egress_rules = {
-    https   = { protocol = "tcp", port = 443, description = "API server" }
-    kubelet = { protocol = "tcp", port = 10250, description = "Kubelet" }
-    dns-tcp = { protocol = "tcp", port = 53, description = "DNS (TCP)" }
-    dns-udp = { protocol = "udp", port = 53, description = "DNS (UDP)" }
-  }
-}
-
+# Everything to the group itself: the control plane, the kubelets and DNS, and
+# node-to-node traffic. Pods hold VPC addresses on the nodes' ENIs (Cilium ENI
+# mode, native routing), so pod-to-pod traffic across nodes and Cilium's own
+# health checks cross this group on arbitrary ports. It mirrors the
+# all-traffic self ingress rule EKS keeps on the group.
 resource "aws_vpc_security_group_egress_rule" "default_self" {
-  for_each = var.network.restrict_default_security_group ? local.cluster_self_egress_rules : {}
+  for_each = toset(var.network.restrict_default_security_group ? ["true"] : [])
 
   security_group_id            = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
   referenced_security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
-  ip_protocol                  = each.value.protocol
-  from_port                    = each.value.port
-  to_port                      = each.value.port
-  description                  = "${each.value.description} to members of this security group"
+  ip_protocol                  = "-1"
+  description                  = "All traffic to members of this security group"
+
+  tags = var.tags
+}
+
+# ECR serves image layers from S3. The region's S3 prefix list holds the
+# addresses both through a gateway endpoint and without one.
+data "aws_ec2_managed_prefix_list" "s3" {
+  for_each = toset(var.network.restrict_default_security_group ? ["true"] : [])
+
+  name = "com.amazonaws.${data.aws_region.current.region}.s3"
+}
+
+resource "aws_vpc_security_group_egress_rule" "default_s3" {
+  for_each = data.aws_ec2_managed_prefix_list.s3
+
+  security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  prefix_list_id    = each.value.id
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  description       = "HTTPS to S3 (ECR image layers)"
+
+  tags = var.tags
+}
+
+# The interface endpoints answer the AWS APIs at addresses inside the VPC, on
+# ENIs that wear the caller's endpoint security groups.
+resource "aws_vpc_security_group_egress_rule" "default_endpoints" {
+  for_each = var.network.restrict_default_security_group ? var.network.endpoint_security_group_ids : {}
+
+  security_group_id            = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  referenced_security_group_id = each.value
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  description                  = "HTTPS to the ${each.key} VPC endpoints"
 
   tags = var.tags
 }
@@ -637,10 +667,12 @@ resource "terraform_data" "revoke_default_egress" {
     EOT
   }
 
-  # The minimum rules must exist before the open egress goes away, and the
+  # The replacement rules must exist before the open egress goes away, and the
   # add-ons must be ACTIVE so first-boot image pulls never race the revoke.
   depends_on = [
     aws_vpc_security_group_egress_rule.default_self,
+    aws_vpc_security_group_egress_rule.default_s3,
+    aws_vpc_security_group_egress_rule.default_endpoints,
     aws_eks_addon.main,
     aws_eks_addon.pod_identity_agent,
   ]

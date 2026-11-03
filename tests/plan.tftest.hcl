@@ -152,27 +152,58 @@ run "default_security_group_restriction" {
       node_subnet_ids                 = ["subnet-0aaa", "subnet-0bbb"]
       public_subnet_ids               = ["subnet-0ccc", "subnet-0ddd"]
       restrict_default_security_group = true
+      endpoint_security_group_ids     = { endpoints = "sg-0123456789abcdef0" }
     }
   }
 
   assert {
-    condition     = length(aws_vpc_security_group_egress_rule.default_self) == 4 && length(terraform_data.revoke_default_egress) == 1
-    error_message = "restrict_default_security_group must pin the minimum egress rules onto the EKS-managed group and schedule the allow-all revoke"
+    condition     = length(terraform_data.revoke_default_egress) == 1
+    error_message = "restrict_default_security_group must schedule the allow-all revoke"
   }
 
   assert {
-    condition = toset([
-      for rule in aws_vpc_security_group_egress_rule.default_self : "${rule.ip_protocol}/${rule.from_port}"
-    ]) == toset(["tcp/443", "tcp/10250", "tcp/53", "udp/53"])
-    error_message = "the pinned egress must be exactly the documented minimum: 443 and 10250 (TCP) and 53 (TCP+UDP) to self"
+    condition     = aws_vpc_security_group_egress_rule.default_self["true"].ip_protocol == "-1"
+    error_message = "the group must keep all egress to itself, or pod-to-pod traffic across nodes and Cilium's health checks break"
   }
+
+  assert {
+    condition     = data.aws_ec2_managed_prefix_list.s3["true"].name == "com.amazonaws.eu-west-2.s3" && aws_vpc_security_group_egress_rule.default_s3["true"].from_port == 443
+    error_message = "the group must reach the region's S3 prefix list on 443, where ECR serves image layers"
+  }
+
+  assert {
+    condition = (
+      aws_vpc_security_group_egress_rule.default_endpoints["endpoints"].referenced_security_group_id == "sg-0123456789abcdef0"
+      && aws_vpc_security_group_egress_rule.default_endpoints["endpoints"].from_port == 443
+    )
+    error_message = "the group must reach each endpoint security group on 443"
+  }
+}
+
+run "default_security_group_restriction_needs_endpoints" {
+  command = plan
+
+  variables {
+    network = {
+      vpc_id                          = "vpc-0123456789abcdef0"
+      node_subnet_ids                 = ["subnet-0aaa", "subnet-0bbb"]
+      restrict_default_security_group = true
+    }
+  }
+
+  expect_failures = [var.network]
 }
 
 run "default_security_group_untouched_by_default" {
   command = plan
 
   assert {
-    condition     = length(aws_vpc_security_group_egress_rule.default_self) == 0 && length(terraform_data.revoke_default_egress) == 0
+    condition = (
+      length(aws_vpc_security_group_egress_rule.default_self) == 0
+      && length(aws_vpc_security_group_egress_rule.default_s3) == 0
+      && length(aws_vpc_security_group_egress_rule.default_endpoints) == 0
+      && length(terraform_data.revoke_default_egress) == 0
+    )
     error_message = "without restrict_default_security_group the EKS-managed group must not be touched"
   }
 }
