@@ -162,11 +162,6 @@ run "default_security_group_restriction" {
   }
 
   assert {
-    condition     = aws_vpc_security_group_egress_rule.default_self["true"].ip_protocol == "-1"
-    error_message = "the group must keep all egress to itself, or pod-to-pod traffic across nodes and Cilium's health checks break"
-  }
-
-  assert {
     condition     = data.aws_ec2_managed_prefix_list.s3["true"].name == "com.amazonaws.eu-west-2.s3" && aws_vpc_security_group_egress_rule.default_s3["true"].from_port == 443
     error_message = "the group must reach the region's S3 prefix list on 443, where ECR serves image layers"
   }
@@ -199,8 +194,7 @@ run "default_security_group_untouched_by_default" {
 
   assert {
     condition = (
-      length(aws_vpc_security_group_egress_rule.default_self) == 0
-      && length(aws_vpc_security_group_egress_rule.default_s3) == 0
+      length(aws_vpc_security_group_egress_rule.default_s3) == 0
       && length(aws_vpc_security_group_egress_rule.default_endpoints) == 0
       && length(terraform_data.revoke_default_egress) == 0
     )

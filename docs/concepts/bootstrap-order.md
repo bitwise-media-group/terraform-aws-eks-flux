@@ -61,11 +61,14 @@ EKS always creates an `eks-cluster-sg-*` group with allow-all egress and attache
 node. It can't be replaced or detached, only edited. With `network.restrict_default_security_group` on, the module:
 
 1. adds the egress a node needs to boot and run Cilium:
-   - all traffic to the group itself: the API server, the kubelets, DNS and node-to-node traffic. Pods hold VPC
-     addresses on the nodes' ENIs, so pod-to-pod traffic across nodes and Cilium's health checks use this rule too.
    - HTTPS to the region's S3 prefix list, where ECR serves image layers.
    - HTTPS to each group in `network.endpoint_security_group_ids`, the security groups on the VPC's interface endpoints.
 2. revokes the `0.0.0.0/0` and `::/0` egress rules through the AWS CLI.
+
+All traffic to the group itself stays open: the API server, the kubelets, DNS and node-to-node traffic. Pods hold VPC
+addresses on the nodes' ENIs, so pod-to-pod traffic across nodes and Cilium's health checks use this rule too. The rule
+is EKS's, not the module's. EKS creates it with the group and recreates it whenever the cluster is updated, so the
+module neither adds it nor revokes it.
 
 `network.endpoint_security_group_ids` is required with the restriction. Without it, a new node can't pull the Cilium
 image and the operator can't attach its ENIs, so the node never becomes Ready and its node group hangs in `CREATING`.

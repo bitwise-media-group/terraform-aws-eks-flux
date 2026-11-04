@@ -576,11 +576,10 @@ resource "aws_eks_addon" "main" {
 # creates eks-cluster-sg-* with allow-all egress and attaches it to the
 # control-plane ENIs and every node - it cannot be replaced or detached, only
 # edited. network.restrict_default_security_group swaps the open egress for
-# the paths a node needs to boot and run Cilium: the group itself, S3 (ECR
-# image layers) and the VPC's interface endpoints (ECR, STS, EC2, EKS Auth).
-# It adds those first and then revokes the 0.0.0.0/0 / ::/0 egress rules; EKS
-# re-adds only the self-referencing rules and tags on cluster update, so the
-# revoke sticks.
+# the paths a node needs to boot and run Cilium: S3 (ECR image layers) and the
+# VPC's interface endpoints (ECR, STS, EC2, EKS Auth). It adds those first and
+# then revokes the 0.0.0.0/0 / ::/0 egress rules; EKS re-adds only the
+# self-referencing rules and tags on cluster update, so the revoke sticks.
 #
 # The revoke has no declarative form (terraform cannot delete rules on a
 # security group it does not manage), hence the AWS CLI. It is deliberately
@@ -588,20 +587,19 @@ resource "aws_eks_addon" "main" {
 # toggle on or off, and open egress is closed only once the cluster is up.
 # ---------------------------------------------------------------------------
 
-# Everything to the group itself: the control plane, the kubelets and DNS, and
-# node-to-node traffic. Pods hold VPC addresses on the nodes' ENIs (Cilium ENI
-# mode, native routing), so pod-to-pod traffic across nodes and Cilium's own
-# health checks cross this group on arbitrary ports. It mirrors the
-# all-traffic self ingress rule EKS keeps on the group.
-resource "aws_vpc_security_group_egress_rule" "default_self" {
-  for_each = toset(var.network.restrict_default_security_group ? ["true"] : [])
+# Everything to the group itself - the control plane, the kubelets and DNS,
+# and node-to-node traffic, which pods (VPC addresses on the nodes' ENIs, Cilium
+# ENI mode) and Cilium's health checks cross on arbitrary ports - is EKS's own
+# rule. EKS creates the all-traffic self egress rule with the group and
+# recreates it on every cluster update, so terraform leaves it alone (creating
+# it is a duplicate) and the revoke never touches it. Releases that managed it
+# forget it rather than delete it.
+removed {
+  from = aws_vpc_security_group_egress_rule.default_self
 
-  security_group_id            = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
-  referenced_security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
-  ip_protocol                  = "-1"
-  description                  = "All traffic to members of this security group"
-
-  tags = var.tags
+  lifecycle {
+    destroy = false
+  }
 }
 
 # ECR serves image layers from S3. The region's S3 prefix list holds the
@@ -670,7 +668,6 @@ resource "terraform_data" "revoke_default_egress" {
   # The replacement rules must exist before the open egress goes away, and the
   # add-ons must be ACTIVE so first-boot image pulls never race the revoke.
   depends_on = [
-    aws_vpc_security_group_egress_rule.default_self,
     aws_vpc_security_group_egress_rule.default_s3,
     aws_vpc_security_group_egress_rule.default_endpoints,
     aws_eks_addon.main,

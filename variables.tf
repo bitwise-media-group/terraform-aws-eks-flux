@@ -31,8 +31,8 @@ variable "network" {
     them for caller-owned rules (e.g. API access from a bastion or VPN range).
     restrict_default_security_group revokes the allow-all egress rules (0.0.0.0/0 and ::/0) on the EKS-managed
     cluster security group, which every node and pod wears, and allows only what a node needs to boot and run
-    Cilium instead: all traffic to the group itself, HTTPS to the region's S3 prefix list (ECR image layers) and
-    HTTPS to each of endpoint_security_group_ids. The revoke runs the AWS CLI on the apply host (it must be
+    Cilium instead: HTTPS to the region's S3 prefix list (ECR image layers) and HTTPS to each of
+    endpoint_security_group_ids, beside the all-traffic egress to the group itself that EKS keeps on it. The revoke runs the AWS CLI on the apply host (it must be
     installed and authenticated as the provider identity, with ec2:DescribeSecurityGroupRules and
     ec2:RevokeSecurityGroupEgress), fires once per cluster after bootstrap, and is drift-blind: a manually
     re-added rule is not re-revoked, and toggling back off restores nothing.
