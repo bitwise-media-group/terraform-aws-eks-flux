@@ -456,79 +456,10 @@ run "grant_policy_not_json" {
   expect_failures = [var.workload_grants]
 }
 
-# An application's own capacity joins the way the cluster root's groups do:
-# the shared Linux node role, the node subnets, the cluster security group and
-# the Cilium bootstrap taint ahead of the application's own.
-run "node_groups" {
-  command = plan
-
-  variables {
-    cluster = {
-      name              = "patchy-x"
-      namespace         = "flux-system"
-      platform_registry = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform"
-      tree              = "aws"
-      issuer            = "^https://token\\.actions\\.githubusercontent\\.com$"
-      keyed             = false
-      oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-2.amazonaws.com/id/ABC"
-      oidc_issuer       = "oidc.eks.eu-west-2.amazonaws.com/id/ABC"
-      secret_prefix     = "patchy-x-"
-
-      node_role_arn             = "arn:aws:iam::123456789012:role/patchy-x-nodes"
-      node_subnet_ids           = ["subnet-0aaa", "subnet-0bbb"]
-      cluster_security_group_id = "sg-0123456789abcdef0"
-    }
-    node_groups = {
-      arm64 = {
-        instance_types = ["m7g.large"]
-        ami_type       = "AL2023_ARM_64_STANDARD"
-        labels         = { "example.com/pool" = "arm64" }
-        taints         = [{ key = "example.com/pool", value = "arm64", effect = "NO_SCHEDULE" }]
-      }
-    }
-  }
-
-  assert {
-    condition     = length(module.node_group["arm64"].taints) == 2 && anytrue([for taint in module.node_group["arm64"].taints : taint.key == "node.cilium.io/agent-not-ready"])
-    error_message = "an application node group must carry the Cilium bootstrap taint alongside its own"
-  }
-
-  assert {
-    condition     = module.node_group["arm64"].labels["example.com/pool"] == "arm64"
-    error_message = "an application node group must carry the labels its pods select on"
-  }
-
-  assert {
-    condition     = length(output.node_groups) == 1
-    error_message = "every node_groups entry must surface its node group"
-  }
-}
-
-run "node_groups_need_node_target" {
-  command = plan
-
-  variables {
-    node_groups = {
-      arm64 = { ami_type = "AL2023_ARM_64_STANDARD" }
-    }
-  }
-
-  expect_failures = [var.node_groups]
-}
-
-run "node_groups_linux_only" {
-  command = plan
-
-  variables {
-    node_groups = {
-      windows = { ami_type = "WINDOWS_CORE_2022_x86_64" }
-    }
-  }
-
-  expect_failures = [var.node_groups]
-}
-
-run "node_groups_custom_ami" {
+# The cluster root's whole application_target - node facts included, which a
+# modules/node-group call beside this one consumes - passes straight through.
+# The module itself owns no capacity.
+run "application_target_passes_through" {
   command = plan
 
   variables {
@@ -552,64 +483,10 @@ run "node_groups_custom_ami" {
       certificate_authority = "Q0EtREFUQQ=="
       service_cidr          = "172.20.0.0/16"
     }
-    node_groups = {
-      golden = {
-        ami = { owners = ["111122223333"], name = "acme-eks-{kubernetes_version}-*" }
-      }
-    }
   }
 
   assert {
-    condition     = module.node_group["golden"].ami_id != null
-    error_message = "an application node group with ami must resolve and run the custom image"
+    condition     = helm_release.seed.name == "application-demo"
+    error_message = "a full application_target must plan the seed unchanged"
   }
-
-  assert {
-    condition     = anytrue([for taint in module.node_group["golden"].taints : taint.key == "node.cilium.io/agent-not-ready"])
-    error_message = "a custom-AMI application group still carries the Cilium bootstrap taint"
-  }
-}
-
-run "node_groups_custom_ami_needs_bootstrap_facts" {
-  command = plan
-
-  variables {
-    cluster = {
-      name              = "patchy-x"
-      namespace         = "flux-system"
-      platform_registry = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform"
-      tree              = "aws"
-      issuer            = "^https://token\\.actions\\.githubusercontent\\.com$"
-      keyed             = false
-      oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-2.amazonaws.com/id/ABC"
-      oidc_issuer       = "oidc.eks.eu-west-2.amazonaws.com/id/ABC"
-      secret_prefix     = "patchy-x-"
-
-      node_role_arn             = "arn:aws:iam::123456789012:role/patchy-x-nodes"
-      node_subnet_ids           = ["subnet-0aaa", "subnet-0bbb"]
-      cluster_security_group_id = "sg-0123456789abcdef0"
-    }
-    node_groups = {
-      golden = {
-        ami = { owners = ["111122223333"], id = "ami-0golden" }
-      }
-    }
-  }
-
-  expect_failures = [var.node_groups]
-}
-
-run "node_groups_reject_ami_with_ami_type" {
-  command = plan
-
-  variables {
-    node_groups = {
-      golden = {
-        ami      = { owners = ["111122223333"], id = "ami-0golden" }
-        ami_type = "AL2023_x86_64_STANDARD"
-      }
-    }
-  }
-
-  expect_failures = [var.node_groups]
 }

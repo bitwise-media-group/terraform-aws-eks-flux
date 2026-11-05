@@ -39,12 +39,10 @@ variable "cluster" {
       - oidc_provider_arn / oidc_issuer: the cluster's IRSA OIDC provider and its issuer host (no scheme), which
         the podless secret-sync reader roles trust.
       - secret_prefix: the SECRET_PREFIX the readers' Secrets Manager grant is scoped to.
-      - node_role_arn / node_subnet_ids / cluster_security_group_id: the Linux node role (admitted through the
-        cluster root's EC2_LINUX access entry), the node subnets and the EKS-managed cluster security group that
-        node_groups join with. Optional so an older application_target still plans; node_groups requires them.
-      - version / endpoint / certificate_authority / service_cidr: the Kubernetes version, API endpoint, base64
-        certificate authority and service CIDR a node group's custom ami bootstraps from. Optional for the same
-        reason; a node group with ami requires them.
+      - node_role_arn / node_subnet_ids / cluster_security_group_id / version / endpoint / certificate_authority /
+        service_cidr: node facts this module does not read. The module owns no capacity; application_target carries
+        them for a modules/node-group call beside this one, and they are optional here only so the output passes
+        straight through.
   EOT
   type = object({
     name              = string
@@ -222,72 +220,6 @@ variable "secret_readers" {
   }))
   nullable = false
   default  = []
-}
-
-variable "node_groups" {
-  description = <<-EOT
-    Managed node groups the application brings with it, keyed by a short name: capacity Karpenter cannot express, such
-    as a static pool of another architecture that only this application's pods tolerate. Each group is named
-    <name>-<key> (a name prefix, so a replacement never collides with the group it supersedes), joins with the
-    cluster's Linux node role into its node subnets wearing the EKS-managed cluster security group, and takes the
-    cluster root's node_groups sizing arguments plus ami_type (null is the EKS AL2023 default for the instance
-    architecture; AL2023_ARM_64_STANDARD for Graviton) or ami (a custom AL2023 image instead of ami_type - the cluster
-    root's system_node_group shape: owners plus exactly one of id or name, and optional user_data_parts), labels and
-    taints. Every group gets the Cilium agent-not-ready bootstrap taint exactly as the cluster root's groups do; add a
-    taint of your own to keep other workloads off it. Linux only: Windows groups need the cluster root's windows node
-    role.
-  EOT
-  type = map(object({
-    instance_types = optional(list(string), ["m7i.large"])
-    capacity_type  = optional(string, "ON_DEMAND")
-    min_size       = optional(number, 2)
-    max_size       = optional(number, 4)
-    desired_size   = optional(number, 2)
-    disk_size_gib  = optional(number, 50)
-    ami_type       = optional(string)
-    ami = optional(object({
-      owners = list(string)
-      id     = optional(string)
-      name   = optional(string)
-      user_data_parts = optional(list(object({
-        content_type = optional(string, "application/node.eks.aws")
-        content      = string
-      })), [])
-    }))
-    labels = optional(map(string), {})
-    taints = optional(list(object({
-      key    = string
-      value  = optional(string)
-      effect = string
-    })), [])
-  }))
-  nullable = false
-  default  = {}
-
-  validation {
-    condition     = alltrue([for key in keys(var.node_groups) : can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", key)) && length("${var.name}-${key}") <= 37])
-    error_message = "node_groups keys must be lowercase RFC-1035 labels, and <name>-<key> must be at most 37 characters (it prefixes the node group and launch template names)."
-  }
-
-  validation {
-    condition     = alltrue([for group in values(var.node_groups) : startswith(coalesce(group.ami_type, "AL2023_"), "AL2023_")])
-    error_message = "node_groups ami_type must be an AL2023_* EKS AMI type (or null for the EKS default) - Windows groups need the cluster root's windows node role."
-  }
-
-  validation {
-    condition     = length(var.node_groups) == 0 || (var.cluster.node_role_arn != null && var.cluster.cluster_security_group_id != null && length(var.cluster.node_subnet_ids) > 0)
-    error_message = "node_groups needs cluster.node_role_arn, cluster.node_subnet_ids and cluster.cluster_security_group_id - pass an application_target from a cluster module that publishes them."
-  }
-
-  validation {
-    condition     = alltrue([for group in values(var.node_groups) : group.ami == null || group.ami_type == null])
-    error_message = "node_groups entries must not set both ami and ami_type - a custom AMI carries no EKS AMI type."
-  }
-
-  validation {
-    condition     = alltrue([for group in values(var.node_groups) : group.ami == null]) || (var.cluster.version != null && var.cluster.endpoint != null && var.cluster.certificate_authority != null && var.cluster.service_cidr != null)
-    error_message = "a node group with ami needs cluster.version, cluster.endpoint, cluster.certificate_authority and cluster.service_cidr - pass an application_target from a cluster module that publishes them."
-  }
 }
 
 variable "tags" {
