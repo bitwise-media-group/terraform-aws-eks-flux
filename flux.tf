@@ -139,8 +139,10 @@ locals {
     # the public subnets, pinned to the reserved addresses by allocation id
     # (the IPs are informational - external-dns publishes records against
     # the NLB); a private Gateway (var.gateway.private) is an internal NLB
-    # on the node subnets, with the EIP vars empty - the gateway component
-    # gates that annotation absent.
+    # on network.internal_subnet_ids (the node subnets when that is empty),
+    # with the EIP vars empty - the gateway component gates that annotation
+    # absent. GATEWAY_SUBNETS names whichever set applies
+    # (local.gateway_subnet_ids).
     GATEWAY_NLB_SCHEME      = var.gateway.private ? "internal" : "internet-facing"
     GATEWAY_EIP_ALLOCATIONS = join(",", local.gateway_allocation_ids)
     GATEWAY_IP              = join(",", local.gateway_addresses)
