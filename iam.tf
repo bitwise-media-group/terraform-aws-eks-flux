@@ -242,6 +242,25 @@ data "aws_iam_policy_document" "load_balancer_controller" {
     resources = ["*"]
   }
 
+  # A fresh account has no AWSServiceRoleForElasticLoadBalancing until the
+  # first load balancer is created; CreateLoadBalancer mints it on demand when
+  # the caller may. Granting that here (rather than an
+  # aws_iam_service_linked_role) is idempotent: the resource fails when the
+  # role already exists, collides across clusters sharing an account, and
+  # would delete an account-wide role on destroy.
+  statement {
+    sid       = "CreateServiceLinkedRole"
+    effect    = "Allow"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["elasticloadbalancing.amazonaws.com"]
+    }
+  }
+
   statement {
     sid    = "ManageLoadBalancers"
     effect = "Allow"
