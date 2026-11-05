@@ -298,6 +298,11 @@ workload roles and the podless reader roles (`<cluster>-secrets-<ns>-<sa>`, so `
 resolving). The names are the same on purpose: an application lives in the cluster root **or** in its own root, never
 both, and a collision fails loudly - helm refuses a release or namespace another release owns, IAM a duplicate role.
 
+**Application capacity.** `modules/application` owns no nodes. An application that needs a dedicated pool either calls
+`modules/node-group` beside it, fed from the same `application_target` (which carries the Linux node role, node
+subnets, cluster security group and the bootstrap facts a custom AMI needs; the module adds Cilium's agent-not-ready
+taint itself), or ships a Karpenter `NodePool` in its own manifests against the platform's `EC2NodeClass default`.
+
 **Dex clients.** An application registers its OIDC clients itself, by shipping `DexClient` objects in its own image;
 the platform's dex-client-controller registers each with dex and writes the credentials to a Secret beside it
 (`<name>-dex-client`, keys `clientID`, `clientSecret` and `issuer`). The client id is `<namespace>-<name>`; an explicit

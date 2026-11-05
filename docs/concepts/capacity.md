@@ -1,7 +1,8 @@
 # Capacity
 
 The cluster has two kinds of capacity. A **system node group** is always on and carries the platform. **Karpenter**
-provisions everything else on demand. `node_groups` adds static pools for the cases Karpenter can't express.
+provisions everything else on demand. `node_groups` adds static pools for the cases Karpenter can't express. An
+application published from its own root brings [its own capacity](#capacity-for-an-application), if it needs any.
 
 ## The system node group
 
@@ -93,12 +94,69 @@ The controller role is scoped so a compromised controller can do little harm:
 
 `node_groups` adds managed node groups for what Karpenter can't express, such as nodes with extra security groups or
 Windows nodes. Each goes through the [node-group](../modules/node-group.md) module, carries the Cilium bootstrap taint
-(except on Windows) and joins through the shared Linux node role. A group can run a custom AL2023 image through `ami`
-instead of `ami_type`. See [Custom AMIs](../modules/node-group.md#custom-amis).
+(the module's `cilium_agent_taint`, skipped on Windows) and joins through the shared Linux node role. A group can run a
+custom AL2023 image through `ami` instead of `ami_type`. See [Custom AMIs](../modules/node-group.md#custom-amis).
 
 `WINDOWS_*` AMI types get a separate node role. An IAM principal can carry only one EKS access entry, and Windows nodes
 join through `EC2_WINDOWS` while Linux nodes join through `EC2_LINUX`. The Windows role has the same managed policies
 but no Cilium ENI grant, since Cilium has no Windows datapath.
+
+## Capacity for an application
+
+[`modules/application`](../modules/application.md) owns no nodes. An application that shares Karpenter's default pool
+needs nothing more. One that needs dedicated capacity, such as another architecture or a pool only its pods tolerate,
+picks one of two patterns.
+
+### A managed node group beside the application
+
+The application root calls [node-group](../modules/node-group.md) next to `modules/application`, fed from the same
+`application_target` output. The output carries every node fact the module needs:
+
+| `application_target` field                                     | `modules/node-group` input                                                                        |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `name`                                                         | `cluster_name`                                                                                    |
+| `node_role_arn`                                                | `node_role_arn`: the shared Linux node role, already admitted by the root's `EC2_LINUX` entry     |
+| `node_subnet_ids`                                              | `subnet_ids`                                                                                      |
+| `cluster_security_group_id`                                    | `cluster_security_group_id`                                                                       |
+| `version`, `endpoint`, `certificate_authority`, `service_cidr` | `kubernetes_version`, `cluster_endpoint`, `cluster_certificate_authority`, `cluster_service_cidr` |
+
+The last row only matters with a custom `ami`, whose nodeadm bootstrap the module renders. The module adds Cilium's
+`agent-not-ready` bootstrap taint ahead of the group's own (`cilium_agent_taint`, on by default), exactly as the cluster
+root's groups get it. Add a taint of your own to keep other workloads off the group. Groups are Linux only:
+`application_target` publishes the Linux node role, and Windows nodes need the root's Windows role.
+
+```hcl
+module "node_group" {
+  source = "git::https://github.com/bitwise-media-group/terraform-aws-eks-flux.git//modules/node-group?ref=vX.Y.Z"
+
+  cluster_name              = local.cluster.name
+  name                      = "patchy-arm64"
+  node_role_arn             = local.cluster.node_role_arn
+  subnet_ids                = local.cluster.node_subnet_ids
+  cluster_security_group_id = local.cluster.cluster_security_group_id
+
+  instance_types = ["m7g.large"]
+  ami_type       = "AL2023_ARM_64_STANDARD"
+
+  labels = { "example.com/pool" = "patchy-arm64" }
+  taints = [{ key = "example.com/pool", value = "patchy-arm64", effect = "NO_SCHEDULE" }]
+}
+```
+
+Here `local.cluster` is `data.terraform_remote_state.cluster.outputs.application_target`, the same value the application
+module's `cluster` input takes. [`examples/application`](../getting-started/examples.md#application) shows both calls
+together.
+
+### A Karpenter NodePool in the application's manifests
+
+The application ships its own Karpenter `NodePool` in its image, pointing `nodeClassRef` at the platform's
+`EC2NodeClass default`. Karpenter launches its nodes with the platform's node role, subnets, security groups and AMI
+selection, so the application root needs no capacity terraform at all. Give the `NodePool` its own requirements, taints
+and `spec.limits`, and keep its name clear of the platform's own (`KARPENTER_NODE_POOL_NAME`, `default` unless
+`karpenter.node_pool.name` changes it).
+
+Prefer the `NodePool` when Karpenter can express the capacity: it scales from zero and consolidates. Use a node group
+for what it can't, such as a fixed pool that must always be up.
 
 ## Node permissions
 

@@ -59,9 +59,10 @@ application repo's module. See [Applications](../concepts/applications.md).
 ## application
 
 An application published from a root of its own, with nothing changed in the cluster root: the seed, its vars, a
-namespace and a secret reader role, all keyed to the cluster through the cluster root's `application_target` output. It
-takes that output as a variable so it plans on its own; a real root reads it with `terraform_remote_state`. See
-[application](../modules/application.md).
+namespace and a secret reader role, plus a dedicated Graviton node group beside it, all keyed to the cluster through the
+cluster root's `application_target` output. It takes that output as a variable so it plans on its own; a real root reads
+it with `terraform_remote_state`. See [application](../modules/application.md) and
+[Capacity for an application](../concepts/capacity.md#capacity-for-an-application).
 
 ```hcl title="examples/application/main.tf"
 --8<-- "examples/application/main.tf"

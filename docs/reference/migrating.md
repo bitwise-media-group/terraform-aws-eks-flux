@@ -1,5 +1,34 @@
 # Migrating
 
+## Application node groups
+
+`modules/application` no longer takes `node_groups`: an application root calls
+[`modules/node-group`](../modules/node-group.md) beside it, fed from the same `application_target`. See
+[Capacity for an application](../concepts/capacity.md#capacity-for-an-application). To keep existing groups without a
+replacement, give each call the name the application module used (`<name>-<key>`) and move its state:
+
+```hcl
+module "node_group" {
+  source   = "git::https://github.com/bitwise-media-group/terraform-aws-eks-flux.git//modules/node-group?ref=vX.Y.Z"
+  for_each = local.node_groups # the map node_groups used to take
+
+  cluster_name              = local.cluster.name
+  name                      = "patchy-${each.key}"
+  node_role_arn             = local.cluster.node_role_arn
+  subnet_ids                = local.cluster.node_subnet_ids
+  cluster_security_group_id = local.cluster.cluster_security_group_id
+
+  # instance_types, sizes, ami_type / ami, labels and taints as before. The
+  # Cilium bootstrap taint is added by the module (cilium_agent_taint), so
+  # don't list it.
+}
+
+moved {
+  from = module.patchy.module.node_group
+  to   = module.node_group
+}
+```
+
 ## From 4.x
 
 5.0 is a breaking release: `applications[*].dex_clients` leaves the cluster module. Applications register their OIDC

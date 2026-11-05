@@ -19,6 +19,16 @@ variable "cluster" {
     oidc_provider_arn = string
     oidc_issuer       = string
     secret_prefix     = string
+
+    # The node facts module.node_group joins with.
+    node_role_arn             = string
+    node_subnet_ids           = set(string)
+    cluster_security_group_id = string
+
+    version               = string
+    endpoint              = string
+    certificate_authority = optional(string)
+    service_cidr          = optional(string)
   })
 }
 

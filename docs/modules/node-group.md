@@ -1,9 +1,11 @@
 # node-group
 
-!!! info "Internal submodule"
+!!! info "Called by the root, or beside an application"
 
-    The root module calls this one for the system node group and for each `node_groups` entry. You don't usually call
-    it directly. Configure it through the cluster module's `system_node_group` and `node_groups` inputs.
+    The root module calls this one for the system node group and for each `node_groups` entry; configure those
+    through the cluster module's `system_node_group` and `node_groups` inputs. An application published from its own
+    root calls it directly, beside [application](application.md), fed from the cluster's `application_target` output.
+    See [Capacity for an application](../concepts/capacity.md#capacity-for-an-application).
 
 One EKS managed node group behind a launch template the module owns.
 
@@ -47,6 +49,12 @@ device rather than discovering it. A custom `ami` is resolved by the module, so 
 
 **IMDSv2 only**, with a hop limit of 2. That matches the EKS default, so containers (one hop through the bridge) can
 still reach the node's metadata.
+
+**The Cilium bootstrap taint.** `cilium_agent_taint` (on by default) prepends
+`node.cilium.io/agent-not-ready=true:NoExecute` to `taints`, so nothing schedules on a new node until Cilium can give it
+an address. The Cilium agent and operator tolerate every taint, and the operator lifts this one once the agent is ready.
+`WINDOWS_*` groups never get it, because Cilium has no Windows datapath to lift it. Don't list the taint in `taints` as
+well; the module refuses it. Turn `cilium_agent_taint` off only on a cluster whose CNI isn't Cilium.
 
 **Node auto-repair** is on. Its health signals come from the `eks-node-monitoring-agent` add-on.
 

@@ -51,16 +51,19 @@ refuses a release or a namespace another release owns, and IAM refuses a duplica
 
 `cluster` is the cluster root's `application_target` output, verbatim:
 
-| Field                                                           | Used for                                                                                                                                                                   |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                                          | The IAM role prefix and the Pod Identity associations                                                                                                                      |
-| `namespace`                                                     | Where the seed and the vars live (the flux namespace)                                                                                                                      |
-| `platform_registry`                                             | Picks the listing and pull dialect, as in [flux-operator](flux-operator.md)                                                                                                |
-| `tree`                                                          | The default image path, `./deploy/<tree>`                                                                                                                                  |
-| `issuer`, `keyed`                                               | The default keyless issuer, or KMS mode (null issuer, `cosign-pub` verification)                                                                                           |
-| `oidc_provider_arn`, `oidc_issuer`                              | The secret reader roles' IRSA trust                                                                                                                                        |
-| `secret_prefix`                                                 | The secret reader roles' `GetSecretValue` scope, `${SECRET_PREFIX}*`                                                                                                       |
-| `node_role_arn`, `node_subnet_ids`, `cluster_security_group_id`, `version`, `endpoint`, `certificate_authority`, `service_cidr` | Not read here. They are for a [node-group](node-group.md) call beside this module; optional, so `application_target` passes straight through |
+| Field                                                           | Used for                                                                             |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `name`                                                          | The IAM role prefix and the Pod Identity associations                                |
+| `namespace`                                                     | Where the seed and the vars live (the flux namespace)                                |
+| `platform_registry`                                             | Picks the listing and pull dialect, as in [flux-operator](flux-operator.md)          |
+| `tree`                                                          | The default image path, `./deploy/<tree>`                                            |
+| `issuer`, `keyed`                                               | The default keyless issuer, or KMS mode (null issuer, `cosign-pub` verification)     |
+| `oidc_provider_arn`, `oidc_issuer`                              | The secret reader roles' IRSA trust                                                  |
+| `secret_prefix`                                                 | The secret reader roles' `GetSecretValue` scope, `${SECRET_PREFIX}*`                 |
+| `node_role_arn`, `node_subnet_ids`, `cluster_security_group_id` | Not read here. A [node-group](node-group.md) call beside this module joins with them |
+| `version`, `endpoint`, `certificate_authority`, `service_cidr`  | Not read here. A node group's custom `ami` bootstraps from them                      |
+
+The node fields are optional in the variable type, so `application_target` passes straight through.
 
 The image's validations run against it, so an ECR image outside `platform_registry`, a keyed image on a keyless cluster
 and a pull secret on the platform registry all fail at plan.
@@ -70,8 +73,7 @@ and a pull secret on the platform registry all fail at plan.
 The module owns no nodes. An application that needs dedicated capacity brings it one of two ways, both described in
 [Capacity](../concepts/capacity.md#capacity-for-an-application):
 
-- **A managed node group**: call [node-group](node-group.md) beside this module, fed from the same
-  `application_target`.
+- **A managed node group**: call [node-group](node-group.md) beside this module, fed from the same `application_target`.
 - **A Karpenter `NodePool`** shipped in the application's own manifests, against the platform's `EC2NodeClass default`.
 
 ### Dex clients

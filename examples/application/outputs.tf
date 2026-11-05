@@ -16,3 +16,11 @@ output "secret_reader_roles" {
   description = "The secret-sync reader role ARNs, keyed <namespace>/<service_account>."
   value       = module.demo.secret_reader_roles
 }
+
+output "node_group" {
+  description = "The application's own node group: its actual name (with the generated suffix) and ARN."
+  value = {
+    name = module.node_group.name
+    arn  = module.node_group.arn
+  }
+}
