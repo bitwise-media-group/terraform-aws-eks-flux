@@ -34,12 +34,13 @@ locals {
   # custom images are AL2023 only.
   karpenter_ami_family = local.karpenter_ami == null ? "" : "AL2023"
 
-  # Subnets and security groups Karpenter (and the load-balancer controller)
-  # discover by tag. The VPC is owned upstream, so tagging is opt-out.
-  discovery_targets = var.network.manage_discovery_tags ? setunion(
-    var.network.node_subnet_ids,
-    var.network.public_subnet_ids,
-  ) : []
+  # The subnets Karpenter discovers by tag: the node subnets only, since
+  # EC2NodeClass default selects subnets by this tag alone and a tagged
+  # subnet is one it may launch nodes into. The public and internal subnets
+  # stay untagged - the Gateway's NLB names its subnets explicitly
+  # (GATEWAY_SUBNETS) and the load-balancer controller never reads this tag.
+  # The VPC is owned upstream, so tagging is opt-out.
+  discovery_targets = var.network.manage_discovery_tags ? var.network.node_subnet_ids : []
 }
 
 # Fails the plan early when the custom image is unowned by owners or matches

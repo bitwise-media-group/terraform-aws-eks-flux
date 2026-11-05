@@ -17,8 +17,8 @@
 #     and replicated to this example's region (its replica_regions)
 #
 # Subnets must carry the kubernetes.io/role/{internal-,}elb tags for the
-# Gateway's NLB; the cluster module adds the karpenter.sh/discovery tag itself
-# unless network.manage_discovery_tags is turned off.
+# Gateway's NLB; the cluster module adds the karpenter.sh/discovery tag to the
+# node subnets itself unless network.manage_discovery_tags is turned off.
 
 provider "aws" {
   region = var.region

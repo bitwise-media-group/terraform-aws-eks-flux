@@ -63,7 +63,7 @@ The module deliberately owns nothing that must outlive a cluster. Create these u
 - **An AWS account in an AWS Organization.** The store and the signing key grant reads by `aws:PrincipalOrgID`.
 - **A VPC** with private node subnets and public subnets. It needs NAT, or VPC endpoints for ECR, S3, STS and EKS. The
   subnets need the `kubernetes.io/role/elb` / `kubernetes.io/role/internal-elb` tags. The cluster module adds the
-  `karpenter.sh/discovery` tag itself.
+  `karpenter.sh/discovery` tag to the node subnets itself.
 - **A delegated Route53 hosted zone**, if the cluster serves a domain.
 - **A GitHub Actions OIDC provider** in the platform account. The artifact-store module can create one if none exists.
 

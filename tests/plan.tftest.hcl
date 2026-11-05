@@ -685,6 +685,23 @@ run "karpenter_node_pool_shape" {
     error_message = "Karpenter-launched nodes need an EC2_LINUX access entry to join"
   }
 
+  # EC2NodeClass default selects subnets by the discovery tag alone, so a
+  # tagged public subnet is one Karpenter could launch nodes into.
+  assert {
+    condition     = toset(keys(aws_ec2_tag.discovery)) == toset(var.network.node_subnet_ids)
+    error_message = "every node subnet must carry the discovery tag, so Karpenter can launch into it"
+  }
+
+  assert {
+    condition     = length(setintersection(toset(keys(aws_ec2_tag.discovery)), toset(var.network.public_subnet_ids))) == 0
+    error_message = "the public subnets must never carry the discovery tag - Karpenter would launch nodes into them"
+  }
+
+  assert {
+    condition     = alltrue([for tag in aws_ec2_tag.discovery : tag.key == "karpenter.sh/discovery" && tag.value == "patchy-x"])
+    error_message = "the discovery tag must be karpenter.sh/discovery=<cluster name>, matching CLUSTER_DISCOVERY_TAG/VALUE"
+  }
+
   assert {
     condition = (
       local.reserved_cluster_vars.KARPENTER_NAMESPACE == aws_eks_pod_identity_association.karpenter_controller.namespace
@@ -692,6 +709,25 @@ run "karpenter_node_pool_shape" {
       && local.reserved_cluster_vars.KARPENTER_NAMESPACE == "kube-system"
     )
     error_message = "the chart must install into the namespace/ServiceAccount pair the Pod Identity association binds (kube-system by default)"
+  }
+}
+
+# Where the VPC owner tags the subnets, the module tags nothing at all.
+run "discovery_tags_opt_out" {
+  command = plan
+
+  variables {
+    network = {
+      vpc_id                = "vpc-0123456789abcdef0"
+      node_subnet_ids       = ["subnet-0aaa", "subnet-0bbb"]
+      public_subnet_ids     = ["subnet-0ccc", "subnet-0ddd"]
+      manage_discovery_tags = false
+    }
+  }
+
+  assert {
+    condition     = length(aws_ec2_tag.discovery) == 0 && length(aws_ec2_tag.cluster_security_group_discovery) == 0
+    error_message = "manage_discovery_tags = false must leave every subnet and the cluster security group untagged"
   }
 }
 

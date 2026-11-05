@@ -24,16 +24,21 @@ Karpenter isn't an EKS add-on: it's in neither the AWS nor the community catalog
 EKS Auto Mode, which owns networking with the AWS VPC CNI and so can't run Cilium in ENI mode. Karpenter therefore
 deploys as a platform component, with Terraform providing everything AWS-side.
 
-| Terraform owns (`karpenter.tf`)                                         | flux-manifests owns                        |
-| ----------------------------------------------------------------------- | ------------------------------------------ |
-| The node role, its instance profile permissions and its access entry    | The karpenter chart                        |
-| The controller role, bound by Pod Identity                              | The `EC2NodeClass` and default `NodePool`  |
-| The SQS interruption queue and EventBridge rules                        | Rendering both from the `KARPENTER_*` vars |
-| `karpenter.sh/discovery` tags on subnets and the cluster security group |                                            |
-| The NodePool's _shape_ (`karpenter.node_pool`)                          |                                            |
+| Terraform owns (`karpenter.tf`)                                                  | flux-manifests owns                        |
+| -------------------------------------------------------------------------------- | ------------------------------------------ |
+| The node role, its instance profile permissions and its access entry             | The karpenter chart                        |
+| The controller role, bound by Pod Identity                                       | The `EC2NodeClass` and default `NodePool`  |
+| The SQS interruption queue and EventBridge rules                                 | Rendering both from the `KARPENTER_*` vars |
+| `karpenter.sh/discovery` tags on the node subnets and the cluster security group |                                            |
+| The NodePool's _shape_ (`karpenter.node_pool`)                                   |                                            |
 
 This split keeps capacity policy with the rest of the cluster's shape, in Terraform, without Terraform ever applying a
 custom resource whose CRD flux hasn't installed yet.
+
+Only the node subnets carry the discovery tag. `EC2NodeClass default` selects subnets by that tag alone, so any tagged
+subnet is one Karpenter may launch nodes into. The public and internal subnets stay untagged: the Gateway's NLB names
+its subnets explicitly (`GATEWAY_SUBNETS`). Earlier releases tagged the public subnets too, and an apply on this release
+removes those tags.
 
 ### The NodePool shape
 

@@ -24,9 +24,9 @@ variable "network" {
     reserved EIPs (a private Gateway spans the internal subnets instead, so they may be omitted then);
     internal_subnet_ids moves a private Gateway's internal NLB off the node subnets - onto subnets routable from
     outside the VPC, say, where the node subnets are not (defaults to the node subnets).
-    manage_discovery_tags lets this module apply the karpenter.sh/discovery tag to the node and public subnets -
-    turn it off where the VPC owner tags them instead. The internal subnets are never tagged: the Gateway names
-    them explicitly, and an untagged subnet is one Karpenter never launches nodes into.
+    manage_discovery_tags lets this module apply the karpenter.sh/discovery tag to the node subnets -
+    turn it off where the VPC owner tags them instead. The public and internal subnets are never tagged: the Gateway
+    names its subnets explicitly, and an untagged subnet is one Karpenter never launches nodes into.
     security_group_ids attach to the control-plane ENIs alongside the EKS-managed cluster security group - use
     them for caller-owned rules (e.g. API access from a bastion or VPN range).
     restrict_default_security_group revokes the allow-all egress rules (0.0.0.0/0 and ::/0) on the EKS-managed
