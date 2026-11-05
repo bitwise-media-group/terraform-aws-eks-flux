@@ -684,6 +684,38 @@ run "karpenter_node_pool_shape" {
     condition     = aws_eks_access_entry.karpenter_node.type == "EC2_LINUX"
     error_message = "Karpenter-launched nodes need an EC2_LINUX access entry to join"
   }
+
+  assert {
+    condition = (
+      local.reserved_cluster_vars.KARPENTER_NAMESPACE == aws_eks_pod_identity_association.karpenter_controller.namespace
+      && local.reserved_cluster_vars.KARPENTER_SERVICE_ACCOUNT == aws_eks_pod_identity_association.karpenter_controller.service_account
+      && local.reserved_cluster_vars.KARPENTER_NAMESPACE == "kube-system"
+    )
+    error_message = "the chart must install into the namespace/ServiceAccount pair the Pod Identity association binds (kube-system by default)"
+  }
+}
+
+# An overridden namespace must reach the manifests as well as the
+# association: published only on one side, the chart would install where
+# the credentials are not and Karpenter would run without an identity.
+run "karpenter_namespace_follows_workload_identity" {
+  command = plan
+
+  variables {
+    workload_identity = {
+      karpenter = { namespace = "karpenter" }
+    }
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.karpenter_controller.namespace == "karpenter" && local.reserved_cluster_vars.KARPENTER_NAMESPACE == "karpenter"
+    error_message = "workload_identity.karpenter.namespace must drive both the Pod Identity association and KARPENTER_NAMESPACE"
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.KARPENTER_SERVICE_ACCOUNT == "karpenter"
+    error_message = "overriding the namespace alone must keep the ServiceAccount default"
+  }
 }
 
 run "karpenter_ami_defaults_to_the_alias" {

@@ -175,7 +175,8 @@ AWS-specific:
 
 Karpenter's NodePool shape travels the same way, since `cluster-vars` is a flat string map:
 
-- **wiring** - `KARPENTER_NODE_ROLE`, `KARPENTER_INTERRUPTION_QUEUE`, `KARPENTER_SERVICE_ACCOUNT`
+- **wiring** - `KARPENTER_NODE_ROLE`, `KARPENTER_INTERRUPTION_QUEUE`, `KARPENTER_NAMESPACE`, `KARPENTER_SERVICE_ACCOUNT`
+  (the pair the controller's Pod Identity association binds, from `workload_identity.karpenter`)
 - **selection** - `KARPENTER_INSTANCE_CATEGORIES`, `KARPENTER_INSTANCE_FAMILIES`, `KARPENTER_INSTANCE_SIZES`,
   `KARPENTER_CAPACITY_TYPES`, `KARPENTER_ARCHITECTURES`. These are **comma-joined lists**, expanded manifests-side with
   `splitList` - the same pattern `PLATFORM_COMPONENTS` uses, so no new mechanism is involved.

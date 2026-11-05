@@ -13,6 +13,8 @@ nothing tries to get credentials before the agent exists.
 
 `workload_identity` holds the platform's namespace/service-account pairs. They're part of the Terraform ↔
 platform-manifests contract, and their shape is cloud-neutral. Override them only to follow a manifests change.
+Karpenter's pair is the exception: it's published whole (`KARPENTER_NAMESPACE`, `KARPENTER_SERVICE_ACCOUNT`), so the
+karpenter component follows an override on its own.
 
 | Pair (default)                                                 | Granted                                                                                   |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |

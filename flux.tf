@@ -233,9 +233,14 @@ locals {
     ]) : "[]"
 
     # --- Karpenter -------------------------------------------------------
-    # Wiring the component needs to render its EC2NodeClass/NodePool.
+    # Wiring the component needs to render its EC2NodeClass/NodePool. The
+    # namespace and ServiceAccount are the pair the Pod Identity association
+    # binds (karpenter.tf), so the chart lands exactly where the credentials
+    # are - an overridden workload_identity.karpenter follows without a
+    # manifests change.
     KARPENTER_NODE_ROLE          = aws_iam_role.karpenter_node.name
     KARPENTER_INTERRUPTION_QUEUE = aws_sqs_queue.karpenter_interruption.name
+    KARPENTER_NAMESPACE          = var.workload_identity.karpenter.namespace
     KARPENTER_SERVICE_ACCOUNT    = var.workload_identity.karpenter.service_account
 
     # The default NodePool's shape. Lists arrive comma-joined and are expanded

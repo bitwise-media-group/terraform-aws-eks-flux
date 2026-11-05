@@ -107,10 +107,13 @@ they're off, so substitution never fails and the manifests can check for empties
 
 | Group     | Keys                                                                                                                                                                     |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Wiring    | `KARPENTER_NODE_ROLE`, `KARPENTER_INTERRUPTION_QUEUE`, `KARPENTER_SERVICE_ACCOUNT`, `KARPENTER_NODE_POOL_NAME`                                                           |
+| Wiring    | `KARPENTER_NODE_ROLE`, `KARPENTER_INTERRUPTION_QUEUE`, `KARPENTER_NAMESPACE`, `KARPENTER_SERVICE_ACCOUNT`, `KARPENTER_NODE_POOL_NAME`                                    |
 | Selection | `KARPENTER_INSTANCE_CATEGORIES`, `KARPENTER_INSTANCE_FAMILIES`, `KARPENTER_INSTANCE_SIZES`, `KARPENTER_CAPACITY_TYPES`, `KARPENTER_ARCHITECTURES`                        |
 | Ceilings  | `KARPENTER_MAX_NODES`, `KARPENTER_CPU_LIMIT`, `KARPENTER_MEMORY_LIMIT`, `KARPENTER_NODE_DISK_GIB`                                                                        |
 | Lifecycle | `KARPENTER_AMI_ALIAS`, `KARPENTER_AMI_SELECTOR_TERMS`, `KARPENTER_AMI_FAMILY`, `KARPENTER_CONSOLIDATION_POLICY`, `KARPENTER_CONSOLIDATE_AFTER`, `KARPENTER_EXPIRE_AFTER` |
+
+`KARPENTER_NAMESPACE` and `KARPENTER_SERVICE_ACCOUNT` are `workload_identity.karpenter`, the pair the controller's Pod
+Identity association binds, so the chart installs where the credentials are.
 
 Selection lists are comma-joined. See [Capacity](capacity.md#the-nodepool-shape). `KARPENTER_AMI_SELECTOR_TERMS` is the
 exception: it's the `EC2NodeClass`'s whole `amiSelectorTerms` list as JSON (read with `mustFromJson`, like
