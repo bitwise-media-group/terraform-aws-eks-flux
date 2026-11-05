@@ -376,18 +376,6 @@ resource "aws_eks_identity_provider_config" "dex" {
 # ---------------------------------------------------------------------------
 
 locals {
-  # Nothing schedules on a new Linux node until Cilium can give it an address.
-  # The Cilium agent and operator tolerate all taints, and the operator removes
-  # this one once the agent is ready (operator.removeNodeTaints, on by
-  # default), so it gates workloads without gating the CNI that clears it.
-  # Windows nodes never carry it: Cilium has no Windows datapath, so the taint
-  # would sit unremoved and the group would never schedule a pod.
-  cilium_bootstrap_taint = [{
-    key    = "node.cilium.io/agent-not-ready"
-    value  = "true"
-    effect = "NO_EXECUTE"
-  }]
-
   # A custom AMI's nodes bootstrap from a NodeConfig the node-group module
   # renders, so they need the cluster facts EKS would otherwise inject. try():
   # both are only populated by the real API, so mocked plans see null.
@@ -417,8 +405,9 @@ module "system_node_group" {
   cluster_certificate_authority = local.cluster_certificate_authority
   cluster_service_cidr          = local.cluster_service_cidr
 
+  # The node-group module prepends the Cilium agent-not-ready bootstrap taint
+  # (cilium_agent_taint, on by default).
   labels = local.system_node_selector
-  taints = local.cilium_bootstrap_taint
 
   tags = var.tags
 
@@ -458,11 +447,10 @@ module "node_group" {
   cluster_certificate_authority = local.cluster_certificate_authority
   cluster_service_cidr          = local.cluster_service_cidr
 
+  # The Cilium bootstrap taint comes from the module (cilium_agent_taint),
+  # which skips it on WINDOWS_* groups.
   labels = each.value.labels
-  taints = concat(
-    contains(keys(local.windows_node_groups), each.key) ? [] : local.cilium_bootstrap_taint,
-    each.value.taints,
-  )
+  taints = each.value.taints
 
   tags = var.tags
 

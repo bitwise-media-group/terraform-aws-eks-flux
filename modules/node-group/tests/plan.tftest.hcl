@@ -86,7 +86,7 @@ run "node_group_shape" {
     desired_size = 3
     labels       = { role = "workers" }
     taints = [
-      { key = "node.cilium.io/agent-not-ready", value = "true", effect = "NO_EXECUTE" },
+      { key = "dedicated", value = "workers", effect = "NO_SCHEDULE" },
     ]
   }
 
@@ -103,7 +103,7 @@ run "node_group_shape" {
   assert {
     condition = one([
       for taint in aws_eks_node_group.main.taint :
-      taint if taint.key == "node.cilium.io/agent-not-ready" && taint.effect == "NO_EXECUTE"
+      taint if taint.key == "dedicated" && taint.value == "workers" && taint.effect == "NO_SCHEDULE"
     ]) != null
     error_message = "taints must pass through to the nodes"
   }
@@ -117,6 +117,72 @@ run "node_group_shape" {
     condition     = aws_eks_node_group.main.update_config[0].max_unavailable == 1
     error_message = "rolling updates must take nodes one at a time"
   }
+}
+
+# --- Cilium bootstrap taint ---------------------------------------------------
+
+run "cilium_agent_taint_by_default" {
+  command = plan
+
+  variables {
+    taints = [
+      { key = "dedicated", value = "workers", effect = "NO_SCHEDULE" },
+    ]
+  }
+
+  assert {
+    condition     = length(aws_eks_node_group.main.taint) == 2
+    error_message = "the Cilium bootstrap taint must be added alongside the caller's own taints"
+  }
+
+  assert {
+    condition = one([
+      for taint in aws_eks_node_group.main.taint :
+      taint if taint.key == "node.cilium.io/agent-not-ready" && taint.value == "true" && taint.effect == "NO_EXECUTE"
+    ]) != null
+    error_message = "a Linux group must carry node.cilium.io/agent-not-ready=true:NoExecute by default"
+  }
+}
+
+run "cilium_agent_taint_opt_out" {
+  command = plan
+
+  variables {
+    cilium_agent_taint = false
+    taints = [
+      { key = "dedicated", value = "workers", effect = "NO_SCHEDULE" },
+    ]
+  }
+
+  assert {
+    condition     = length(aws_eks_node_group.main.taint) == 1 && alltrue([for taint in aws_eks_node_group.main.taint : taint.key == "dedicated"])
+    error_message = "cilium_agent_taint = false must leave only the caller's own taints"
+  }
+}
+
+run "cilium_agent_taint_skipped_on_windows" {
+  command = plan
+
+  variables {
+    ami_type = "WINDOWS_CORE_2022_x86_64"
+  }
+
+  assert {
+    condition     = length(aws_eks_node_group.main.taint) == 0
+    error_message = "Windows groups must never carry the Cilium bootstrap taint - Cilium has no Windows datapath to lift it"
+  }
+}
+
+run "cilium_agent_taint_not_listed_twice" {
+  command = plan
+
+  variables {
+    taints = [
+      { key = "node.cilium.io/agent-not-ready", value = "true", effect = "NO_EXECUTE" },
+    ]
+  }
+
+  expect_failures = [var.taints]
 }
 
 run "bottlerocket_is_rejected" {
@@ -164,7 +230,6 @@ run "custom_ami_by_id" {
     cluster_service_cidr          = "172.20.0.0/16"
     labels                        = { role = "system" }
     taints = [
-      { key = "node.cilium.io/agent-not-ready", value = "true", effect = "NO_EXECUTE" },
       { key = "dedicated", effect = "NO_SCHEDULE" },
     ]
   }
@@ -196,7 +261,7 @@ run "custom_ami_by_id" {
 
   assert {
     condition     = strcontains(base64decode(aws_launch_template.main.user_data), "--register-with-taints=node.cilium.io/agent-not-ready=true:NoExecute,dedicated:NoSchedule")
-    error_message = "the kubelet must register the group's taints itself, in kubelet effect syntax"
+    error_message = "the kubelet must register the group's taints itself, Cilium's bootstrap taint first, in kubelet effect syntax"
   }
 
   assert {
@@ -226,6 +291,7 @@ run "custom_ami_by_name" {
     cluster_endpoint              = "https://ABC.gr7.eu-west-2.eks.amazonaws.com"
     cluster_certificate_authority = "Q0EtREFUQQ=="
     cluster_service_cidr          = "172.20.0.0/16"
+    cilium_agent_taint            = false
   }
 
   assert {

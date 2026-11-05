@@ -15,6 +15,21 @@ locals {
   windows    = var.ami_type != null && startswith(var.ami_type, "WINDOWS_")
   custom_ami = var.ami != null
 
+  # Nothing schedules on a new Linux node until Cilium can give it an address.
+  # The Cilium agent and operator tolerate all taints, and the operator removes
+  # this one once the agent is ready (operator.removeNodeTaints, on by
+  # default), so it gates workloads without gating the CNI that clears it.
+  # Windows nodes never carry it: Cilium has no Windows datapath, so the taint
+  # would sit unremoved and the group would never schedule a pod.
+  taints = concat(
+    var.cilium_agent_taint && !local.windows ? [{
+      key    = "node.cilium.io/agent-not-ready"
+      value  = "true"
+      effect = "NO_EXECUTE"
+    }] : [],
+    var.taints,
+  )
+
   # EKS picks the AMI for the ami_type, so the block-device mapping must name
   # that family's root device rather than discovering it. A custom image is
   # resolved here, so its own root device is read off the image instead.
@@ -32,8 +47,8 @@ locals {
 
   kubelet_flags = concat(
     length(var.labels) > 0 ? ["--node-labels=${join(",", [for key, value in var.labels : "${key}=${value}"])}"] : [],
-    length(var.taints) > 0 ? ["--register-with-taints=${join(",", [
-      for taint in var.taints : "${taint.key}${taint.value == null ? "" : "=${taint.value}"}:${local.kubelet_taint_effects[taint.effect]}"
+    length(local.taints) > 0 ? ["--register-with-taints=${join(",", [
+      for taint in local.taints : "${taint.key}${taint.value == null ? "" : "=${taint.value}"}:${local.kubelet_taint_effects[taint.effect]}"
     ])}"] : [],
   )
 
@@ -169,7 +184,7 @@ resource "aws_eks_node_group" "main" {
   labels = var.labels
 
   dynamic "taint" {
-    for_each = var.taints
+    for_each = local.taints
 
     content {
       key    = taint.value.key

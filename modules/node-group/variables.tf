@@ -241,7 +241,7 @@ variable "labels" {
 }
 
 variable "taints" {
-  description = "Kubernetes taints applied to every node in the group."
+  description = "Kubernetes taints applied to every node in the group, after the Cilium bootstrap taint (cilium_agent_taint)."
   type = list(object({
     key    = string
     value  = optional(string)
@@ -256,6 +256,23 @@ variable "taints" {
     ])
     error_message = "Each taint effect must be NO_SCHEDULE, NO_EXECUTE or PREFER_NO_SCHEDULE."
   }
+
+  validation {
+    condition     = !var.cilium_agent_taint || alltrue([for taint in var.taints : taint.key != "node.cilium.io/agent-not-ready"])
+    error_message = "taints must not list node.cilium.io/agent-not-ready while cilium_agent_taint is on - the module already prepends it."
+  }
+}
+
+variable "cilium_agent_taint" {
+  description = <<-EOT
+    Prepend Cilium's bootstrap taint (node.cilium.io/agent-not-ready=true:NoExecute) to taints, so nothing schedules
+    on a new node until Cilium can give it an address - the Cilium operator lifts the taint once the agent is ready.
+    Ignored for WINDOWS_* AMI types: Cilium has no Windows datapath, so the taint would never be lifted. Turn it off
+    only on a cluster whose CNI is not Cilium.
+  EOT
+  type        = bool
+  nullable    = false
+  default     = true
 }
 
 variable "tags" {

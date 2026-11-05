@@ -265,11 +265,18 @@ run "additional_node_groups" {
     node_groups = {
       workers = {
         labels = { role = "workers" }
+        taints = [{ key = "dedicated", value = "workers", effect = "NO_SCHEDULE" }]
       }
       win = {
         ami_type = "WINDOWS_CORE_2022_x86_64"
+        taints   = [{ key = "os", value = "windows", effect = "NO_SCHEDULE" }]
       }
     }
+  }
+
+  assert {
+    condition     = length(module.node_group["workers"].taints) == 2 && length(module.node_group["win"].taints) == 1 && length(module.system_node_group.taints) == 1
+    error_message = "each group carries its own taints plus, on Linux only, exactly one Cilium bootstrap taint"
   }
 
   assert {
