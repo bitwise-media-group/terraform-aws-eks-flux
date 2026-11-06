@@ -34,6 +34,11 @@ locals {
   # custom images are AL2023 only.
   karpenter_ami_family = local.karpenter_ami == null ? "" : "AL2023"
 
+  # The controller's EC2 grants are confined to the cluster's region.
+  karpenter_ec2_arn = "arn:${local.partition}:ec2:${data.aws_region.current.region}"
+
+  karpenter_instance_profile_arn = "arn:${local.partition}:iam::${local.account_id}:instance-profile/*"
+
   # The subnets Karpenter discovers by tag: the node subnets only, since
   # EC2NodeClass default selects subnets by this tag alone and a tagged
   # subnet is one it may launch nodes into. The public and internal subnets
@@ -259,29 +264,200 @@ resource "aws_cloudwatch_event_target" "karpenter" {
 # pod-identity-agent exists).
 # ---------------------------------------------------------------------------
 
+# The EC2 statements follow Karpenter's reference controller policy. EC2
+# authorizes a launch against every resource it touches, and aws:RequestTag
+# only exists for the ones the call creates and tags: the resources a launch
+# merely uses (image, subnet, security group, launch template) cannot be
+# scoped by it, and a delete or a later tag carries no creation tags at all.
 data "aws_iam_policy_document" "karpenter_controller" {
+  # What a launch uses but does not own. The subnets and security groups are
+  # whatever the EC2NodeClass selects; the launch template is gated below.
   statement {
-    sid    = "LaunchAndTerminate"
+    sid    = "LaunchFrom"
     effect = "Allow"
 
     actions = [
-      "ec2:CreateLaunchTemplate",
       "ec2:CreateFleet",
       "ec2:RunInstances",
-      "ec2:CreateTags",
-      "ec2:TerminateInstances",
-      "ec2:DeleteLaunchTemplate",
     ]
 
-    resources = ["*"]
+    resources = [
+      "${local.karpenter_ec2_arn}::image/*",
+      "${local.karpenter_ec2_arn}::snapshot/*",
+      "${local.karpenter_ec2_arn}:*:security-group/*",
+      "${local.karpenter_ec2_arn}:*:subnet/*",
+      "${local.karpenter_ec2_arn}:*:capacity-reservation/*",
+      "${local.karpenter_ec2_arn}:*:placement-group/*",
+    ]
+  }
 
-    # Karpenter may only touch resources belonging to THIS cluster; everything
-    # it creates carries the tag, and the launch/terminate calls are scoped to
-    # it. Instance types and images are read-only lookups (next statement).
+  # Only launch templates Karpenter itself made for a NodePool of this
+  # cluster.
+  statement {
+    sid    = "LaunchFromTemplate"
+    effect = "Allow"
+
+    actions = [
+      "ec2:CreateFleet",
+      "ec2:RunInstances",
+    ]
+
+    resources = ["${local.karpenter_ec2_arn}:*:launch-template/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+  }
+
+  # What a launch creates must be tagged as this cluster's and a NodePool's,
+  # and may be tagged only as it is created.
+  statement {
+    sid    = "Launch"
+    effect = "Allow"
+
+    actions = [
+      "ec2:CreateFleet",
+      "ec2:CreateLaunchTemplate",
+      "ec2:RunInstances",
+    ]
+
+    resources = [
+      "${local.karpenter_ec2_arn}:*:fleet/*",
+      "${local.karpenter_ec2_arn}:*:instance/*",
+      "${local.karpenter_ec2_arn}:*:volume/*",
+      "${local.karpenter_ec2_arn}:*:network-interface/*",
+      "${local.karpenter_ec2_arn}:*:launch-template/*",
+      "${local.karpenter_ec2_arn}:*:spot-instances-request/*",
+    ]
+
     condition {
       test     = "StringEquals"
       variable = "aws:RequestTag/kubernetes.io/cluster/${var.name}"
       values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.name]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+  }
+
+  statement {
+    sid     = "TagOnLaunch"
+    effect  = "Allow"
+    actions = ["ec2:CreateTags"]
+
+    resources = [
+      "${local.karpenter_ec2_arn}:*:fleet/*",
+      "${local.karpenter_ec2_arn}:*:instance/*",
+      "${local.karpenter_ec2_arn}:*:volume/*",
+      "${local.karpenter_ec2_arn}:*:network-interface/*",
+      "${local.karpenter_ec2_arn}:*:launch-template/*",
+      "${local.karpenter_ec2_arn}:*:spot-instances-request/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/kubernetes.io/cluster/${var.name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.name]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values   = ["CreateFleet", "CreateLaunchTemplate", "RunInstances"]
+    }
+  }
+
+  # Once an instance is running, Karpenter tags it with its name, NodeClaim
+  # and cluster; that request carries only those keys, so it is scoped by the
+  # tags the instance already wears rather than the ones being added.
+  statement {
+    sid       = "TagNodes"
+    effect    = "Allow"
+    actions   = ["ec2:CreateTags"]
+    resources = ["${local.karpenter_ec2_arn}:*:instance/*"]
+
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["eks:eks-cluster-name", "karpenter.sh/nodeclaim", "Name"]
+    }
+  }
+
+  # A delete (or a node repair's reboot) carries no request tags, so it is
+  # scoped by the resource's own: this cluster's, and a NodePool's, which
+  # keeps the system node group's instances (also tagged owned) out of reach.
+  statement {
+    sid    = "Delete"
+    effect = "Allow"
+
+    actions = [
+      "ec2:DeleteLaunchTemplate",
+      "ec2:RebootInstances",
+      "ec2:TerminateInstances",
+    ]
+
+    resources = [
+      "${local.karpenter_ec2_arn}:*:instance/*",
+      "${local.karpenter_ec2_arn}:*:launch-template/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
     }
   }
 
@@ -291,11 +467,14 @@ data "aws_iam_policy_document" "karpenter_controller" {
 
     actions = [
       "ec2:DescribeAvailabilityZones",
+      "ec2:DescribeCapacityReservations",
       "ec2:DescribeImages",
       "ec2:DescribeInstances",
+      "ec2:DescribeInstanceStatus",
       "ec2:DescribeInstanceTypeOfferings",
       "ec2:DescribeInstanceTypes",
       "ec2:DescribeLaunchTemplates",
+      "ec2:DescribePlacementGroups",
       "ec2:DescribeSecurityGroups",
       "ec2:DescribeSpotPriceHistory",
       "ec2:DescribeSubnets",
@@ -303,6 +482,21 @@ data "aws_iam_policy_document" "karpenter_controller" {
     ]
 
     resources = ["*"]
+  }
+
+  # Karpenter steers launches away from a zone the cluster has been
+  # zonal-shifted out of.
+  statement {
+    sid       = "ReadZonalShift"
+    effect    = "Allow"
+    actions   = ["arc-zonal-shift:GetManagedResource"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "arc-zonal-shift:ResourceIdentifier"
+      values   = [aws_eks_cluster.main.arn]
+    }
   }
 
   # Karpenter reads the EKS-published AMI ids for the alias in the
@@ -336,20 +530,135 @@ data "aws_iam_policy_document" "karpenter_controller" {
     }
   }
 
-  # Karpenter manages the instance profile for its EC2NodeClass itself.
+  # Karpenter manages the instance profile for its EC2NodeClass itself. Like
+  # the EC2 grants, these follow its reference policy: it may create only
+  # profiles tagged as this cluster's, in this region, for an EC2NodeClass,
+  # and change or delete only profiles that already are. IAM is global, so
+  # the region tag is what keeps one region's controller off another's.
+  statement {
+    sid       = "CreateInstanceProfiles"
+    effect    = "Allow"
+    actions   = ["iam:CreateInstanceProfile"]
+    resources = [local.karpenter_instance_profile_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/kubernetes.io/cluster/${var.name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/topology.kubernetes.io/region"
+      values   = [data.aws_region.current.region]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/karpenter.k8s.aws/ec2nodeclass"
+      values   = ["*"]
+    }
+  }
+
+  statement {
+    sid       = "TagInstanceProfiles"
+    effect    = "Allow"
+    actions   = ["iam:TagInstanceProfile"]
+    resources = [local.karpenter_instance_profile_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/topology.kubernetes.io/region"
+      values   = [data.aws_region.current.region]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.k8s.aws/ec2nodeclass"
+      values   = ["*"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/kubernetes.io/cluster/${var.name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/topology.kubernetes.io/region"
+      values   = [data.aws_region.current.region]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/karpenter.k8s.aws/ec2nodeclass"
+      values   = ["*"]
+    }
+  }
+
   statement {
     sid    = "ManageInstanceProfiles"
     effect = "Allow"
 
     actions = [
       "iam:AddRoleToInstanceProfile",
-      "iam:CreateInstanceProfile",
       "iam:DeleteInstanceProfile",
-      "iam:GetInstanceProfile",
       "iam:RemoveRoleFromInstanceProfile",
-      "iam:TagInstanceProfile",
     ]
 
+    resources = [local.karpenter_instance_profile_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/topology.kubernetes.io/region"
+      values   = [data.aws_region.current.region]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.k8s.aws/ec2nodeclass"
+      values   = ["*"]
+    }
+  }
+
+  statement {
+    sid       = "ReadInstanceProfiles"
+    effect    = "Allow"
+    actions   = ["iam:GetInstanceProfile"]
+    resources = [local.karpenter_instance_profile_arn]
+  }
+
+  # Listing cannot be scoped by tag; Karpenter lists to garbage-collect the
+  # profiles it left behind, then deletes them under the grants above.
+  statement {
+    sid       = "ListInstanceProfiles"
+    effect    = "Allow"
+    actions   = ["iam:ListInstanceProfiles"]
     resources = ["*"]
   }
 

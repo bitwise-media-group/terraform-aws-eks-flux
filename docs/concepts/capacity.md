@@ -87,13 +87,18 @@ account's EventBridge rules can write to the queue, so nobody elsewhere can inje
 
 The controller role is scoped so a compromised controller can do little harm:
 
-- It can launch only resources tagged as owned by **this** cluster.
+- It follows Karpenter's reference controller policy for EC2, within the cluster's region. Everything a launch creates
+  must be tagged as **this** cluster's and a NodePool's, and only as it is created.
+- It can launch from, tag, reboot, terminate or delete only instances and launch templates that already carry this
+  cluster's tag and a NodePool's, so the system node group's instances stay out of reach.
 - Discovery (instance types, subnets, security groups, images) and the EKS-published AMI ids in SSM are read-only
   lookups.
 - KMS access exists only for the keys named in `node_pool.ami.kms_key_arns`, and grants only for AWS resources.
 - `iam:PassRole` is limited to the Karpenter node role, and only to EC2. The controller can't launch instances with a
   more privileged identity.
-- It manages the instance profile for its `EC2NodeClass` itself.
+- It manages the instance profile for its `EC2NodeClass` itself. It can create only profiles tagged as this cluster's,
+  in this region, for an `EC2NodeClass`, and tag, change or delete only profiles that already carry those tags. Listing
+  can't be scoped, so it lists every profile to garbage-collect the ones it left behind.
 
 ## Static node groups
 

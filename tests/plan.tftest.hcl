@@ -773,6 +773,62 @@ run "karpenter_ami_defaults_to_the_alias" {
   }
 }
 
+run "karpenter_scopes_existing_resources_by_resource_tag" {
+  command = plan
+
+  assert {
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.karpenter_controller.statement :
+      contains(statement.actions, "ec2:RunInstances") && anytrue([for resource in statement.resources : endswith(resource, ":subnet/*")])
+    ])
+    error_message = "the controller must be able to launch into a subnet"
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in data.aws_iam_policy_document.karpenter_controller.statement : alltrue([
+        for condition in statement.condition : !startswith(condition.variable, "aws:RequestTag/")
+      ])
+      if contains(statement.actions, "ec2:RunInstances") && anytrue([for resource in statement.resources : endswith(resource, ":subnet/*")])
+    ])
+    error_message = "a launch's existing image, subnet and security group carry no request tags, so RunInstances on them must not be scoped by aws:RequestTag"
+  }
+
+  assert {
+    condition = anytrue([
+      for statement in data.aws_iam_policy_document.karpenter_controller.statement :
+      contains(statement.actions, "ec2:RunInstances") && statement.resources == toset(["arn:aws:ec2:eu-west-2:*:launch-template/*"])
+      && contains([for condition in statement.condition : condition.variable], "aws:ResourceTag/karpenter.sh/nodepool")
+    ])
+    error_message = "launching from an existing launch template must be scoped by the template's own tags"
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in data.aws_iam_policy_document.karpenter_controller.statement : alltrue([
+        for condition in statement.condition : !startswith(condition.variable, "aws:RequestTag/")
+      ]) && contains([for condition in statement.condition : condition.variable], "aws:ResourceTag/karpenter.sh/nodepool")
+      if anytrue([for action in statement.actions : contains(["ec2:TerminateInstances", "ec2:DeleteLaunchTemplate"], action)])
+    ])
+    error_message = "a delete carries no request tags, so terminate and delete must be scoped by the resource's tags, a NodePool's included"
+  }
+
+  assert {
+    condition     = anytrue([for statement in data.aws_iam_policy_document.karpenter_controller.statement : contains(statement.actions, "iam:ListInstanceProfiles")])
+    error_message = "instance profile garbage collection needs iam:ListInstanceProfiles"
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in data.aws_iam_policy_document.karpenter_controller.statement :
+      contains([for condition in statement.condition : condition.variable], "aws:ResourceTag/topology.kubernetes.io/region")
+      || contains([for condition in statement.condition : condition.variable], "aws:RequestTag/topology.kubernetes.io/region")
+      if anytrue([for action in statement.actions : contains(["iam:AddRoleToInstanceProfile", "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:RemoveRoleFromInstanceProfile", "iam:TagInstanceProfile"], action)])
+    ])
+    error_message = "every instance profile change must be scoped to this cluster's profiles in this region by tag"
+  }
+}
+
 run "karpenter_custom_ami_by_name" {
   command = plan
 
