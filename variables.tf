@@ -24,9 +24,14 @@ variable "network" {
     reserved EIPs (a private Gateway spans the internal subnets instead, so they may be omitted then);
     internal_subnet_ids moves a private Gateway's internal NLB off the node subnets - onto subnets routable from
     outside the VPC, say, where the node subnets are not (defaults to the node subnets).
+    control_plane_subnet_ids moves the EKS control-plane ENIs, and so the private API endpoint's addresses, off the
+    node subnets - onto subnets routable from outside the VPC, say (defaults to the node subnets). Nodes and pods
+    never use them. They must be in the availability zones the cluster was created in (EKS changes them in place only
+    within those zones), at least two of them, and each needs at least 6 free addresses for EKS to roll the ENIs.
     manage_discovery_tags lets this module apply the karpenter.sh/discovery tag to the node subnets -
-    turn it off where the VPC owner tags them instead. The public and internal subnets are never tagged: the Gateway
-    names its subnets explicitly, and an untagged subnet is one Karpenter never launches nodes into.
+    turn it off where the VPC owner tags them instead. The public, internal and control-plane subnets are never tagged:
+    the Gateway and the cluster name their subnets explicitly, and an untagged subnet is one Karpenter never launches
+    nodes into.
     security_group_ids attach to the control-plane ENIs alongside the EKS-managed cluster security group - use
     them for caller-owned rules (e.g. API access from a bastion or VPN range).
     restrict_default_security_group revokes the allow-all egress rules (0.0.0.0/0 and ::/0) on the EKS-managed
@@ -48,6 +53,7 @@ variable "network" {
     pod_subnet_ids                  = optional(set(string), [])
     public_subnet_ids               = optional(set(string), [])
     internal_subnet_ids             = optional(set(string), [])
+    control_plane_subnet_ids        = optional(set(string), [])
     manage_discovery_tags           = optional(bool, true)
     security_group_ids              = optional(set(string), [])
     restrict_default_security_group = optional(bool, false)
@@ -58,6 +64,13 @@ variable "network" {
   validation {
     condition     = length(var.network.node_subnet_ids) > 0
     error_message = "network.node_subnet_ids must name at least one private subnet for the system node group."
+  }
+
+  # EKS spreads the control-plane ENIs across at least two availability zones
+  # and rejects a cluster config naming fewer subnets.
+  validation {
+    condition     = length(var.network.control_plane_subnet_ids) == 0 || length(var.network.control_plane_subnet_ids) >= 2
+    error_message = "network.control_plane_subnet_ids must name at least two subnets, in different availability zones, when set (or be empty to use the node subnets)."
   }
 
   # Without the endpoints a restricted node cannot pull the Cilium image or

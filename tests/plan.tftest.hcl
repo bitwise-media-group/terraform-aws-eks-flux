@@ -107,6 +107,11 @@ run "cluster_shape" {
   }
 
   assert {
+    condition     = aws_eks_cluster.main.vpc_config[0].subnet_ids == var.network.node_subnet_ids
+    error_message = "without network.control_plane_subnet_ids the control-plane ENIs must sit in the node subnets"
+  }
+
+  assert {
     condition     = contains(aws_eks_cluster.main.enabled_cluster_log_types, "audit")
     error_message = "control-plane audit logs must ship to CloudWatch"
   }
@@ -1058,6 +1063,59 @@ run "internal_subnets_require_private_gateway" {
   }
 
   expect_failures = [var.gateway]
+}
+
+# The control-plane ENIs (the private endpoint's addresses) can move onto
+# subnets routable from outside the VPC while nodes and pods stay put: the
+# node groups keep the node subnets, and the control-plane subnets are never
+# discovery-tagged, so Karpenter never launches nodes into them.
+run "control_plane_subnets" {
+  command = plan
+
+  variables {
+    network = {
+      vpc_id                   = "vpc-0123456789abcdef0"
+      node_subnet_ids          = ["subnet-0aaa", "subnet-0bbb"]
+      public_subnet_ids        = ["subnet-0ccc", "subnet-0ddd"]
+      control_plane_subnet_ids = ["subnet-0eee", "subnet-0fff"]
+    }
+  }
+
+  assert {
+    condition     = aws_eks_cluster.main.vpc_config[0].subnet_ids == toset(["subnet-0eee", "subnet-0fff"])
+    error_message = "network.control_plane_subnet_ids must place the control-plane ENIs"
+  }
+
+  assert {
+    condition     = toset(keys(aws_ec2_tag.discovery)) == toset(["subnet-0aaa", "subnet-0bbb"])
+    error_message = "the control-plane subnets must never carry the discovery tag - Karpenter would launch nodes into them"
+  }
+
+  assert {
+    condition     = output.application_target.node_subnet_ids == toset(["subnet-0aaa", "subnet-0bbb"])
+    error_message = "application-owned node groups must still be handed the node subnets when the control plane moves"
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.CILIUM_POD_SUBNET_IDS == jsonencode(["subnet-0aaa", "subnet-0bbb"])
+    error_message = "pod ENIs must stay in the node subnets when the control plane moves"
+  }
+}
+
+# EKS needs the control-plane ENIs in at least two availability zones.
+run "control_plane_subnets_need_two" {
+  command = plan
+
+  variables {
+    network = {
+      vpc_id                   = "vpc-0123456789abcdef0"
+      node_subnet_ids          = ["subnet-0aaa", "subnet-0bbb"]
+      public_subnet_ids        = ["subnet-0ccc", "subnet-0ddd"]
+      control_plane_subnet_ids = ["subnet-0eee"]
+    }
+  }
+
+  expect_failures = [var.network]
 }
 
 run "gateway_private_requires_private_zone" {

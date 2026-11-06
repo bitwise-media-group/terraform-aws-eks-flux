@@ -34,6 +34,32 @@ Authentication is `API` mode: access entries are the only authorization surface,
 used. The creating principal is admitted automatically. `cluster_admin_principals` adds break-glass and CI identities
 with `AmazonEKSClusterAdminPolicy`.
 
+### Where the private endpoint lives
+
+The private endpoint's addresses are those of the control-plane ENIs, two to four ENIs EKS places in the cluster's
+subnets. By default they sit in the node subnets, so the private endpoint is reachable from wherever the node subnets
+are. When the nodes sit in a range that isn't routable from outside the VPC, the private endpoint isn't either, and
+off-VPC callers fall back to the public endpoint.
+
+`network.control_plane_subnet_ids` moves the control-plane ENIs onto other subnets, for example the same routable
+subnets that carry a private Gateway's NLB. Nothing else reads it: the node groups keep the node subnets, Cilium keeps
+allocating pod ENIs from `network.pod_subnet_ids`, and the module never tags these subnets with the discovery tag, so
+Karpenter never launches nodes into them. It's a separate input from `network.internal_subnet_ids` even when both name
+the same subnets.
+
+EKS's constraints on these subnets:
+
+- **At least two**, in different availability zones. The module rejects a single subnet.
+- **The cluster's original availability zones.** EKS changes a cluster's subnets in place, but only to subnets in the
+  zones it was created in. Moving to another zone needs a new cluster.
+- **At least 6 free addresses each**, so EKS can create new ENIs beside the old ones during an update or upgrade.
+
+Routable addresses alone don't make the endpoint usable from outside the VPC. The ENIs admit HTTPS only from the cluster
+security group and `network.security_group_ids`, so an off-VPC caller needs a rule in one of those groups. And EKS
+resolves the endpoint's hostname to the private addresses only inside the VPC, through a private hosted zone it manages;
+callers elsewhere need a DNS path to that zone, such as an inbound Route 53 Resolver endpoint and a conditional
+forwarder.
+
 ## The Gateway
 
 The platform serves HTTP through one Cilium Gateway with a wildcard `https` listener on `*.<PLATFORM_DOMAIN>`, backed by

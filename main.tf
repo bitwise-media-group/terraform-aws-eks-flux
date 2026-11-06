@@ -40,6 +40,11 @@ locals {
   # is the single-subnet-pool posture most clusters want.
   pod_subnet_ids = length(var.network.pod_subnet_ids) > 0 ? var.network.pod_subnet_ids : var.network.node_subnet_ids
 
+  # The control-plane ENIs, whose private addresses are the API endpoint;
+  # defaults to the node subnets. Only aws_eks_cluster.main reads it: node
+  # groups, Karpenter (by discovery tag) and Cilium's pod ENIs never do.
+  control_plane_subnet_ids = length(var.network.control_plane_subnet_ids) > 0 ? var.network.control_plane_subnet_ids : var.network.node_subnet_ids
+
   # <account>.dkr.ecr.<region>.amazonaws.com/<prefix> split into the registry
   # host (for the ECR resource ARNs the pull grants are scoped to) and the
   # repository prefix beneath it.
@@ -211,7 +216,9 @@ resource "aws_eks_cluster" "main" {
   bootstrap_self_managed_addons = false
 
   vpc_config {
-    subnet_ids = var.network.node_subnet_ids
+    # Where the control-plane ENIs go, so where the private endpoint answers.
+    # EKS updates this in place within the cluster's original zones.
+    subnet_ids = local.control_plane_subnet_ids
 
     # The private endpoint is always on so in-VPC clients (and the nodes) never
     # traverse the public one; the public endpoint is opt-in for terraform and
