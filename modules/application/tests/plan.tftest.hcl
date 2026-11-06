@@ -102,6 +102,11 @@ run "platform_image_seed" {
     error_message = "the seed waits for kyverno-policies by default and needs no pull secret on the platform registry"
   }
 
+  assert {
+    condition     = yamldecode(helm_release.seed.values[0]).semver == "<1.0.0 >=0.1.0" && yamldecode(helm_release.seed.values[0]).tag == ""
+    error_message = "without a tag the seed follows the semver range, and the chart gets an empty tag"
+  }
+
   # Nothing to render: no vars, no namespaces, no inputs release.
   assert {
     condition     = length(helm_release.inputs) == 0
@@ -175,6 +180,39 @@ run "keyed_seed" {
     condition     = yamldecode(helm_release.seed.values[0]).verify.keyed == true && yamldecode(helm_release.seed.values[0]).verify.subject == "" && yamldecode(helm_release.seed.values[0]).verify.issuer == ""
     error_message = "keyed mode hands the chart the keyed flag and no keyless identity - the chart then verifies against the cosign-pub Secret"
   }
+}
+
+run "channel_seed" {
+  command = plan
+
+  variables {
+    image = {
+      url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+      semver = "<1.0.0 >=0.1.0"
+      tag    = "edge"
+      verify = { subject = "^https://github\\.com/org/demo/.+$" }
+    }
+  }
+
+  # The chart turns the tag into an exact-match includeTag and drops semver.
+  assert {
+    condition     = yamldecode(helm_release.seed.values[0]).tag == "edge"
+    error_message = "the channel tag must reach the chart verbatim"
+  }
+}
+
+run "invalid_tag" {
+  command = plan
+
+  variables {
+    image = {
+      url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+      tag    = "^edge$"
+      verify = { subject = "^https://github\\.com/org/demo/.+$" }
+    }
+  }
+
+  expect_failures = [var.image]
 }
 
 run "inputs_release" {

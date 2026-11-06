@@ -145,6 +145,10 @@ cluster root **or** in its own root, never both: a collision fails loudly, becau
 another release owns and IAM refuses a duplicate role. [`examples/application`](../getting-started/examples.md) is a
 complete application root.
 
+`image.tag` has no cluster root equivalent. It seeds the application onto a channel tag (`edge`, say) in place of the
+semver range, matched exactly, so a cluster can bootstrap from a channel before any release exists. The image's `flux/`
+copy must publish the same filter, or its first reconcile re-points the application.
+
 ## Registry and verification
 
 - **An ECR url must live under `platform_registry.url`.** The flux controllers have pull rights on that prefix only.

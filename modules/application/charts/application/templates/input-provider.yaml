@@ -1,8 +1,10 @@
 # Copyright 2026 BitWise Media Group Ltd
 # SPDX-License-Identifier: MIT
-{{- /* Resolves the newest image tag in the semver range and exports
-       {id, tag, digest} to the ResourceSet. The prune: disabled label is
-       essential: the image's own Kustomization adopts this object (the image
+{{- /* Resolves the newest image tag in the semver range, or the one
+       channel tag when tag is set, and exports {id, tag, digest} to the
+       ResourceSet. A channel drops semver: a semver filter drops every tag
+       that is not a version, the channel included. The prune: disabled
+       label is essential: the image's own Kustomization adopts this object (the image
        ships an identical copy under flux/) and must never be able to prune
        its own parent should a release drop that copy. */}}
 apiVersion: fluxcd.controlplane.io/v1
@@ -23,5 +25,9 @@ spec:
     name: {{ . }}
   {{- end }}
   filter:
+    {{- if .Values.tag }}
+    includeTag: {{ printf "^%s$" (regexQuoteMeta .Values.tag) | quote }}
+    {{- else }}
     semver: {{ .Values.semver | quote }}
+    {{- end }}
     limit: 1

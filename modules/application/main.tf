@@ -84,6 +84,7 @@ resource "helm_release" "seed" {
       name        = var.name
       url         = var.image.url
       semver      = var.image.semver
+      tag         = var.image.tag != null ? var.image.tag : ""
       path        = local.path
       interval    = var.image.interval
       tagProvider = local.tag_provider

@@ -12,6 +12,10 @@ url: ""
 # range matching no tag empties the ResourceSet and prunes the application.
 semver: ">=0.0.0"
 
+# A channel tag the input provider follows in place of semver, matched
+# exactly; it follows the tag's digest as the tag moves. Empty follows semver.
+tag: ""
+
 # How often the input provider re-lists tags and the Kustomization reconciles.
 interval: 30m
 
