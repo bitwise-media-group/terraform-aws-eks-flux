@@ -34,6 +34,22 @@ locals {
   tag_provider = local.platform ? "ECRArtifactTag" : "OCIArtifactTag"
   oci_provider = local.platform ? "aws" : "generic"
 
+  # A channel is its newest immutable build: edge and staging every
+  # pre-release narrowed to their builds by an includeTag regexp ([.] so
+  # nothing needs escaping through HCL, YAML or helm), stable every plain
+  # release (>=0.0.0 excludes pre-releases). Without a channel the seed
+  # follows the semver range, by default every release.
+  channel_build_regexps = {
+    edge    = "^[0-9]+[.][0-9]+[.][0-9]+-edge[.][0-9]{14}[.]g[0-9a-f]{7,40}$"
+    staging = "^[0-9]+[.][0-9]+[.][0-9]+-staging[.][0-9]{14}[.]g[0-9a-f]{7,40}$"
+  }
+  seed_semver = (
+    var.image.channel == null ? coalesce(var.image.semver, ">=0.0.0")
+    : var.image.channel == "stable" ? ">=0.0.0"
+    : ">=0.0.0-0"
+  )
+  seed_include_tag = var.image.channel == null ? "" : lookup(local.channel_build_regexps, var.image.channel, "")
+
   # The same per-cloud tree selector the platform itself syncs.
   path = coalesce(var.image.path, "./deploy/${var.cluster.tree}")
 
@@ -83,8 +99,8 @@ resource "helm_release" "seed" {
     yamlencode({
       name        = var.name
       url         = var.image.url
-      semver      = var.image.semver
-      tag         = var.image.tag != null ? var.image.tag : ""
+      semver      = local.seed_semver
+      includeTag  = local.seed_include_tag
       path        = local.path
       interval    = var.image.interval
       tagProvider = local.tag_provider

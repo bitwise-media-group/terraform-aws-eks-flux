@@ -76,7 +76,7 @@ variable "image" {
   description = <<-EOT
     The application's manifest image, exactly as a cluster root applications entry (minus the dex clients that
     have moved to DexClient objects). Becomes one bootstrap-only seed: a ResourceSetInputProvider and ResourceSet
-    named <name>-manifests that resolve the newest tag matching semver (or the tag channel), verify the image's
+    named <name>-manifests that resolve the newest tag matching semver (or the channel), verify the image's
     cosign signature and apply path from it as Kustomization <name>. The image ships the same two seed objects under
     flux/ and owns them from its first reconcile, so a new application release never needs a terraform apply; the
     seed is applied once and then ignored (ignore_changes). Destroying the module uninstalls the seed and prunes the
@@ -85,10 +85,15 @@ variable "image" {
         controllers pull it with their Pod Identity and list its tags through the ECR API); any other registry is
         listed and pulled generically, optionally with pull_secret (a kubernetes.io/dockerconfigjson Secret in the
         flux namespace that both the tag listing and the pull read).
-      - semver: the tag range the seed follows (default >=0.0.0); a range matching no tag prunes the application.
-      - tag: a channel tag (edge, say) the seed follows in place of semver, matched exactly, so a cluster can
-        bootstrap from a channel before any release exists. The seed follows the tag's digest as it moves. The
-        image's flux/ copy must publish the same filter or it re-points the application on its first reconcile.
+      - semver: the tag range the seed follows (default >=0.0.0 when channel is unset); a range matching no tag
+        prunes the application.
+      - channel: edge, staging or stable, followed in place of semver, so a cluster can bootstrap from a channel
+        before any release exists. No tag moves: a channel is its newest immutable build, edge
+        <base>-edge.<UTC yyyymmddhhmmss>.g<short commit> (0.1.0-edge.20261109153012.g70d3589), staging
+        X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<short commit>, stable the plain vX.Y.Z promotion adds. edge and staging
+        follow semver >=0.0.0-0 narrowed by an includeTag regexp for their builds; stable follows >=0.0.0, which
+        excludes pre-releases. Set at most one of semver and channel. The image's flux/ copy must publish the same
+        filter or it re-points the application on its first reconcile.
       - path: the Kustomization path inside the image (default ./deploy/<cluster.tree>).
       - depends_on: platform Kustomizations the application waits for (default kyverno-policies).
       - verify: keyless (subject, a Fulcio certificate-subject regexp; issuer defaults to cluster.issuer) XOR keyed
@@ -96,8 +101,8 @@ variable "image" {
   EOT
   type = object({
     url        = string
-    semver     = optional(string, ">=0.0.0")
-    tag        = optional(string)
+    semver     = optional(string)
+    channel    = optional(string)
     path       = optional(string)
     interval   = optional(string, "30m")
     depends_on = optional(set(string), ["kyverno-policies"])
@@ -119,8 +124,13 @@ variable "image" {
   }
 
   validation {
-    condition     = var.image.tag == null || can(regex("^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$", var.image.tag))
-    error_message = "image.tag must be a valid OCI tag (letters, digits, '_', '.' and '-', up to 128 characters, not starting with '.' or '-')."
+    condition     = var.image.channel == null || contains(["edge", "staging", "stable"], coalesce(var.image.channel, "-"))
+    error_message = "image.channel must be edge, staging or stable."
+  }
+
+  validation {
+    condition     = var.image.semver == null || var.image.channel == null
+    error_message = "image sets at most one of semver (a version range) and channel (edge, staging or stable)."
   }
 
   validation {

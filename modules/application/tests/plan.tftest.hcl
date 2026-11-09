@@ -103,8 +103,8 @@ run "platform_image_seed" {
   }
 
   assert {
-    condition     = yamldecode(helm_release.seed.values[0]).semver == "<1.0.0 >=0.1.0" && yamldecode(helm_release.seed.values[0]).tag == ""
-    error_message = "without a tag the seed follows the semver range, and the chart gets an empty tag"
+    condition     = yamldecode(helm_release.seed.values[0]).semver == "<1.0.0 >=0.1.0" && yamldecode(helm_release.seed.values[0]).includeTag == ""
+    error_message = "without a channel the seed follows the semver range, and the chart gets no tag filter"
   }
 
   # Nothing to render: no vars, no namespaces, no inputs release.
@@ -187,28 +187,99 @@ run "channel_seed" {
 
   variables {
     image = {
-      url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
-      semver = "<1.0.0 >=0.1.0"
-      tag    = "edge"
-      verify = { subject = "^https://github\\.com/org/demo/.+$" }
+      url     = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+      channel = "edge"
+      verify  = { subject = "^https://github\\.com/org/demo/.+$" }
     }
   }
 
-  # The chart turns the tag into an exact-match includeTag and drops semver.
+  # A channel is its newest immutable build: every pre-release, narrowed to
+  # the channel's builds.
   assert {
-    condition     = yamldecode(helm_release.seed.values[0]).tag == "edge"
-    error_message = "the channel tag must reach the chart verbatim"
+    condition = (
+      yamldecode(helm_release.seed.values[0]).semver == ">=0.0.0-0"
+      && yamldecode(helm_release.seed.values[0]).includeTag == "^[0-9]+[.][0-9]+[.][0-9]+-edge[.][0-9]{14}[.]g[0-9a-f]{7,40}$"
+    )
+    error_message = "edge must follow every pre-release, narrowed to the edge builds"
   }
 }
 
-run "invalid_tag" {
+run "staging_seed" {
+  command = plan
+
+  variables {
+    image = {
+      url     = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+      channel = "staging"
+      verify  = { subject = "^https://github\\.com/org/demo/.+$" }
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.seed.values[0]).semver == ">=0.0.0-0"
+      && yamldecode(helm_release.seed.values[0]).includeTag == "^[0-9]+[.][0-9]+[.][0-9]+-staging[.][0-9]{14}[.]g[0-9a-f]{7,40}$"
+    )
+    error_message = "staging must follow every pre-release, narrowed to the staging builds"
+  }
+}
+
+run "stable_seed" {
+  command = plan
+
+  variables {
+    image = {
+      url     = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+      channel = "stable"
+      verify  = { subject = "^https://github\\.com/org/demo/.+$" }
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.seed.values[0]).semver == ">=0.0.0" && yamldecode(helm_release.seed.values[0]).includeTag == ""
+    error_message = "stable must follow every plain release (>=0.0.0 excludes pre-releases) with no tag filter"
+  }
+}
+
+run "default_semver" {
   command = plan
 
   variables {
     image = {
       url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
-      tag    = "^edge$"
       verify = { subject = "^https://github\\.com/org/demo/.+$" }
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.seed.values[0]).semver == ">=0.0.0" && yamldecode(helm_release.seed.values[0]).includeTag == ""
+    error_message = "with neither semver nor channel the seed follows every release"
+  }
+}
+
+run "invalid_channel" {
+  command = plan
+
+  variables {
+    image = {
+      url     = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+      channel = "nightly"
+      verify  = { subject = "^https://github\\.com/org/demo/.+$" }
+    }
+  }
+
+  expect_failures = [var.image]
+}
+
+run "semver_and_channel" {
+  command = plan
+
+  variables {
+    image = {
+      url     = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
+      semver  = "<1.0.0 >=0.1.0"
+      channel = "edge"
+      verify  = { subject = "^https://github\\.com/org/demo/.+$" }
     }
   }
 

@@ -145,9 +145,13 @@ cluster root **or** in its own root, never both: a collision fails loudly, becau
 another release owns and IAM refuses a duplicate role. [`examples/application`](../getting-started/examples.md) is a
 complete application root.
 
-`image.tag` has no cluster root equivalent. It seeds the application onto a channel tag (`edge`, say) in place of the
-semver range, matched exactly, so a cluster can bootstrap from a channel before any release exists. The image's `flux/`
-copy must publish the same filter, or its first reconcile re-points the application.
+`image.channel` has no cluster root equivalent. It seeds the application onto a channel (`edge`, `staging` or `stable`)
+in place of the semver range, so a cluster can bootstrap from a channel before any release exists. No tag moves: a
+channel is its newest immutable build, the same contract as the platform's sync (see [the contract](contract.md)).
+`edge` and `staging` builds are semver pre-releases (`0.1.0-edge.20261109153012.g70d3589`), so the seed follows
+`>=0.0.0-0` narrowed by an `includeTag` regexp for the channel's builds; `stable` follows `>=0.0.0`, the plain releases.
+Set at most one of `image.semver` and `image.channel`. The image's `flux/` copy must publish the same filter, or its
+first reconcile re-points the application.
 
 ## Registry and verification
 
