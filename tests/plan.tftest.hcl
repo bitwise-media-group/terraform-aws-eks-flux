@@ -538,6 +538,11 @@ run "cluster_vars_contract" {
     error_message = "the sync must default to the platform entrypoint image under the platform registry, and publish it so the flux component can re-point a running cluster"
   }
 
+  assert {
+    condition     = local.reserved_cluster_vars.FLUX_SYNC_CHANNEL == "stable" && local.reserved_cluster_vars.FLUX_SYNC_SEMVER == ">=0.0.0" && local.reserved_cluster_vars.FLUX_SYNC_SEMVER_FILTER == ""
+    error_message = "the default stable channel follows every plain release (>=0.0.0 excludes pre-releases) with no tag filter"
+  }
+
   # The generic-module guard: nothing application-specific may be published.
   assert {
     condition = length([
@@ -581,6 +586,61 @@ run "cluster_vars_contract" {
     condition     = length(module.flux_operator.applications) == 0 && length(output.flux.applications) == 0
     error_message = "a cluster with no applications seeds nothing - the platform alone is a complete deployment"
   }
+}
+
+run "sync_channel_edge" {
+  command = plan
+
+  variables {
+    flux = { sync = { ref = "edge" } }
+  }
+
+  assert {
+    condition = (
+      local.reserved_cluster_vars.FLUX_SYNC_SEMVER == ">=0.0.0-0"
+      && local.reserved_cluster_vars.FLUX_SYNC_SEMVER_FILTER == "^[0-9]+[.][0-9]+[.][0-9]+-edge[.][0-9]{14}[.]g[0-9a-f]{7,40}$"
+    )
+    error_message = "edge follows its newest immutable build: every pre-release, narrowed to the edge builds"
+  }
+}
+
+run "sync_channel_staging" {
+  command = plan
+
+  variables {
+    flux = { sync = { ref = "staging" } }
+  }
+
+  assert {
+    condition = (
+      local.reserved_cluster_vars.FLUX_SYNC_SEMVER == ">=0.0.0-0"
+      && local.reserved_cluster_vars.FLUX_SYNC_SEMVER_FILTER == "^[0-9]+[.][0-9]+[.][0-9]+-staging[.][0-9]{14}[.]g[0-9a-f]{7,40}$"
+    )
+    error_message = "staging follows its newest immutable build: every pre-release, narrowed to the staging builds"
+  }
+}
+
+run "sync_pinned_build" {
+  command = plan
+
+  variables {
+    flux = { sync = { ref = "1.4.0-staging.20261112090000.g1a2b3c4" } }
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.FLUX_SYNC_SEMVER == "1.4.0-staging.20261112090000.g1a2b3c4" && local.reserved_cluster_vars.FLUX_SYNC_SEMVER_FILTER == ""
+    error_message = "a pinned build tag is followed verbatim, with no filter"
+  }
+}
+
+run "sync_rejects_a_moving_tag" {
+  command = plan
+
+  variables {
+    flux = { sync = { ref = "latest" } }
+  }
+
+  expect_failures = [var.flux]
 }
 
 run "kms_signing_mode" {

@@ -53,12 +53,19 @@ variable "distribution" {
 }
 
 variable "sync" {
-  description = "Cluster sync source: the platform entrypoint artifact in the platform registry and the path within it."
+  description = <<-EOT
+    Cluster sync source: the platform entrypoint artifact in the platform registry and the path within it. ref is
+    the FluxInstance's sync ref (a channel name or a version). semver, when set, is patched onto the generated
+    OCIRepository's spec.ref in place of that tag (with semver_filter as its semverFilter when non-empty), so the
+    sync follows the newest immutable build of a channel rather than one moving tag; null keeps ref as the tag.
+  EOT
   type = object({
-    url      = string # oci://<registry>/manifests/platform
-    ref      = string # channel tag (stable, staging, edge) or exact version
-    path     = string # the per-cloud tree ("aws" for this module)
-    interval = optional(string, "5m")
+    url           = string # oci://<registry>/manifests/platform
+    ref           = string # channel (stable, staging, edge) or exact version
+    semver        = optional(string)
+    semver_filter = optional(string, "")
+    path          = string # the per-cloud tree ("aws" for this module)
+    interval      = optional(string, "5m")
   })
   nullable = false
 }

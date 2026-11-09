@@ -33,19 +33,32 @@ controllers through a kustomize patch on the generated `flux-system` Deployments
 
 The instance has a single sync: the platform entrypoint image.
 
-| Input            | Default                                        | Published as        |
-| ---------------- | ---------------------------------------------- | ------------------- |
-| `flux.sync.url`  | `oci://<platform_registry>/manifests/platform` | `FLUX_SYNC_URL`     |
-| `flux.sync.ref`  | `stable` (or `staging`, `edge`, `vX.Y.Z`)      | `FLUX_SYNC_CHANNEL` |
-| `flux.sync.path` | `aws`                                          | `PLATFORM_TREE`     |
+| Input            | Default                                        | Published as                                                           |
+| ---------------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
+| `flux.sync.url`  | `oci://<platform_registry>/manifests/platform` | `FLUX_SYNC_URL`                                                        |
+| `flux.sync.ref`  | `stable` (or `staging`, `edge`, `vX.Y.Z`)      | `FLUX_SYNC_CHANNEL`, and `FLUX_SYNC_SEMVER`, `FLUX_SYNC_SEMVER_FILTER` |
+| `flux.sync.path` | `aws`                                          | `PLATFORM_TREE`                                                        |
 
 The entrypoint pins every component to the same channel unless a `<NAME>_MANIFESTS_REF` cluster var overrides one. The
 manifests are per-cloud trees, and `flux.sync.path` selects the `aws` tree (flux-manifests 4.0.0 or later).
 
-The `FluxInstance` sync has no verify or substitution field, so both ride in as kustomize patches on the objects it
-generates: a cosign `verify` block on the `flux-system` `OCIRepository`, and `postBuild.substituteFrom: cluster-vars` on
-the `flux-system` `Kustomization`. The entrypoint therefore reads the cluster vars like every `Kustomization` it emits.
-The platform's flux component must carry the same two patches, since it re-renders the `FluxInstance` after bootstrap.
+No tag ever moves: every tag in the registry is immutable, and a channel is its newest build.
+
+| Channel   | Each build is tagged                                                                                           | Followed as                                                                              |
+| --------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `edge`    | `<base>-edge.<UTC yyyymmddhhmmss>.g<short commit>`, every merge to main (`0.1.0-edge.20261109153012.g70d3589`) | `>=0.0.0-0`, filtered by `^[0-9]+[.][0-9]+[.][0-9]+-edge[.][0-9]{14}[.]g[0-9a-f]{7,40}$` |
+| `staging` | `X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<short commit>`, every release                                            | `>=0.0.0-0`, filtered by the same regexp with `staging`                                  |
+| `stable`  | `vX.Y.Z`, added to the staging build by promotion                                                              | `>=0.0.0`, which excludes pre-releases                                                   |
+
+A pinned `vX.Y.Z` or full build tag is followed verbatim. Every build also carries `sha-<commit>`. `<base>` is the
+publishing repository's current release-please version.
+
+The `FluxInstance` sync has no verify or substitution field, and renders its `ref` as a tag only, so all three ride in
+as kustomize patches on the objects it generates: a cosign `verify` block and a `spec.ref` of `semver` (and
+`semverFilter`) from `FLUX_SYNC_SEMVER` and `FLUX_SYNC_SEMVER_FILTER` on the `flux-system` `OCIRepository`, and
+`postBuild.substituteFrom: cluster-vars` on the `flux-system` `Kustomization`. The entrypoint therefore reads the
+cluster vars like every `Kustomization` it emits. The platform's flux component must carry the same patches, since it
+re-renders the `FluxInstance` after bootstrap.
 
 !!! tip "Re-pointing a running cluster"
 
@@ -79,7 +92,7 @@ they're off, so substitution never fails and the manifests can check for empties
 | `CLUSTER_NAME`                                                                                            | `name`                                                                                |
 | `PLATFORM_REGISTRY`, `CONTAINER_REGISTRY`                                                                 | Where charts, manifests and mirrored images are pulled from                           |
 | `SIGNED_IDENTITY_ISSUER`, `SIGNED_IDENTITY_CHARTS`, `SIGNED_IDENTITY_IMAGES`, `SIGNED_IDENTITY_MANIFESTS` | The keyless cosign identities (empty in KMS mode)                                     |
-| `FLUX_SYNC_URL`, `FLUX_SYNC_CHANNEL`, `PLATFORM_TREE`                                                     | The sync, as above                                                                    |
+| `FLUX_SYNC_URL`, `FLUX_SYNC_CHANNEL`, `FLUX_SYNC_SEMVER`, `FLUX_SYNC_SEMVER_FILTER`, `PLATFORM_TREE`      | The sync, as above                                                                    |
 | `PLATFORM_COMPONENTS`                                                                                     | The election, as above                                                                |
 | `PLATFORM_DOMAIN`, `DNS_ZONE_NAME`, `DNS_DOMAIN`, `ACME_EMAIL`                                            | The served host (`dns.host` or the zone apex) and DNS/TLS wiring                      |
 | `GATEWAY_IP`                                                                                              | The Gateway's reserved addresses (informational)                                      |
