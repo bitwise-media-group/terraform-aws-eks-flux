@@ -77,19 +77,35 @@ run "create_on_push" {
     error_message = "the manifests template must apply to CREATE_ON_PUSH, or manifest pushes to new paths fail"
   }
 
-  # Channel tags (staging, stable, edge) move between releases; version tags
-  # must not.
+  # No tag ever moves, the channels included: a channel is its newest
+  # immutable build.
   assert {
-    condition     = aws_ecr_repository_creation_template.primary["manifests"].image_tag_mutability == "IMMUTABLE_WITH_EXCLUSION"
-    error_message = "manifest images must be tag-immutable except for their channel tags"
+    condition     = aws_ecr_repository_creation_template.primary["manifests"].image_tag_mutability == "IMMUTABLE" && length(aws_ecr_repository_creation_template.primary["manifests"].image_tag_mutability_exclusion_filter) == 0
+    error_message = "manifest images must be tag-immutable with no exclusions: channels are builds, not moving tags"
+  }
+
+  # The lifecycle order is the protection: ECR never lets a rule expire an
+  # image a higher-priority rule's tags select.
+  assert {
+    condition = alltrue([
+      for name in ["platform", "manifests"] : (
+        [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.rulePriority] == [1, 2, 3, 4, 5]
+        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : try(r.selection.tagPatternList, [])] == [["v*"], ["*-staging.*"], ["*-edge.*"], ["sha-*"], []]
+        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.selection.countNumber] == [10000, 20, 20, 30, 14]
+        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.selection.countType] == ["imageCountMoreThan", "imageCountMoreThan", "imageCountMoreThan", "sinceImagePushed", "sinceImagePushed"]
+        && alltrue([for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.action.type == "expire"])
+      )
+    ])
+    error_message = "both templates must shield promoted releases, keep the newest 20 staging and edge builds, then age out commit tags (30 days) and untagged manifests (14 days), in that priority order"
   }
 
   assert {
-    condition = (
-      toset([for f in aws_ecr_repository_creation_template.primary["manifests"].image_tag_mutability_exclusion_filter : f.filter]) == toset(["edge", "stable", "staging"])
-      && alltrue([for f in aws_ecr_repository_creation_template.primary["manifests"].image_tag_mutability_exclusion_filter : f.filter_type == "WILDCARD"])
-    )
-    error_message = "exactly the edge, stable and staging channel tags may move on manifest images"
+    condition = alltrue([
+      for r in jsondecode(aws_ecr_repository_creation_template.primary["manifests"].lifecycle_policy).rules :
+      (r.selection.tagStatus == "tagged") == (try(r.selection.tagPatternList, null) != null)
+      && (r.selection.countType == "sinceImagePushed") == (try(r.selection.countUnit, null) == "days")
+    ])
+    error_message = "every tagged rule needs a tagPatternList, and exactly the sinceImagePushed rules count in days"
   }
 
   # ECR fails repository creation outright if the template sets tags or KMS
@@ -141,8 +157,8 @@ run "replicas_mirror_the_primary" {
   }
 
   # Repository settings are not replicated: a replica repository gets its tag
-  # mutability (and the channel-tag exclusions) only from a REPLICATION
-  # template in its own region.
+  # mutability and lifecycle only from a REPLICATION template in its own
+  # region.
   assert {
     condition = alltrue([
       for region in ["us-east-1", "ap-southeast-2"] : alltrue([
@@ -161,9 +177,9 @@ run "replicas_mirror_the_primary" {
   assert {
     condition = alltrue([
       for region in ["us-east-1", "ap-southeast-2"] :
-      toset([for f in aws_ecr_repository_creation_template.replica["${region}/manifests"].image_tag_mutability_exclusion_filter : f.filter]) == toset(["edge", "stable", "staging"])
+      length(aws_ecr_repository_creation_template.replica["${region}/manifests"].image_tag_mutability_exclusion_filter) == 0
     ])
-    error_message = "a replica's manifest images must keep exactly the primary's movable channel tags, or a moved tag fails to replicate"
+    error_message = "a replica's manifest images must be as immutable as the primary's"
   }
 
   assert {
@@ -341,8 +357,8 @@ run "publisher_trust_pins_numeric_ids" {
     error_message = "a manifest publisher's subject must pin the numeric ids once repository_id is known"
   }
 
-  # main publishes edge, tags publish releases and move staging, the protected
-  # environment moves stable.
+  # main publishes edge builds, tags publish staging builds, the protected
+  # environment promotes a staging build to stable.
   assert {
     condition     = length(local.manifest_publisher_subjects["flux-manifests"]) == 3
     error_message = "a manifest publisher is trusted from exactly three contexts: main, release tags and the promotion environment"
@@ -499,4 +515,29 @@ run "keyless_signing_grants_no_kms" {
     ]))
     error_message = "keyless mode must grant the publishers no KMS access"
   }
+}
+
+run "retention_is_tunable" {
+  command = plan
+
+  variables {
+    staging_retention_count = 5
+    edge_retention_count    = 50
+    commit_expiry_days      = 7
+  }
+
+  assert {
+    condition     = [for r in jsondecode(aws_ecr_repository_creation_template.primary["platform"].lifecycle_policy).rules : r.selection.countNumber] == [10000, 5, 50, 7, 14]
+    error_message = "the retention counts and commit expiry must come from their variables"
+  }
+}
+
+run "retention_keeps_the_newest_build" {
+  command = plan
+
+  variables {
+    edge_retention_count = 0
+  }
+
+  expect_failures = [var.edge_retention_count]
 }

@@ -56,11 +56,17 @@ variable. The same output carries each repo's signing subjects (`subjects.releas
 
 Every manifest publisher is trusted from the same three GitHub contexts:
 
-| Context                   | Publishes                                |
-| ------------------------- | ---------------------------------------- |
-| `v*` release tags         | versioned artifacts, and moves `staging` |
-| merges to `main`          | the `edge` channel                       |
-| the promotion environment | moves `stable` (`promotion_environment`) |
+| Context                   | Publishes                                                             |
+| ------------------------- | --------------------------------------------------------------------- |
+| `v*` release tags         | staging builds (`X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<short commit>`) |
+| merges to `main`          | edge builds (`<base>-edge.<UTC yyyymmddhhmmss>.g<short commit>`)      |
+| the promotion environment | the stable `vX.Y.Z` tag on a staging build (`promotion_environment`)  |
+
+Every tag is immutable; none of them moves. Each creation template's lifecycle policy keeps promoted releases (`v*`,
+`release_retention_count`), the newest `staging_retention_count` (20) staging and `edge_retention_count` (20) edge
+builds, expires `sha-*` images on no release or channel build after `commit_expiry_days` (30), and untagged manifests
+after `untagged_expiry_days` (14). Templates only apply to repositories created after they change: apply the policy to
+existing repositories separately.
 
 Repos created after 2026-07-15 present immutable subjects with numeric ids, so set each publisher's `repository_id` as
 soon as the repo exists. Until then the subject falls back to the name-only form, which never matches such a repo.
@@ -76,8 +82,8 @@ the account needs other registry policy statements, merge them in through `addit
 ### Replicas
 
 Publishers push to the primary region only. `replica_regions` lists the regions, in the same account, that ECR
-replication copies every push to, including channel-tag moves. A cluster passes the `platform_registries` entry for its
-own region as its `platform_registry`, so it keeps reconciling while the primary region is down.
+replication copies every push to. A cluster passes the `platform_registries` entry for its own region as its
+`platform_registry`, so it keeps reconciling while the primary region is down.
 
 ECR doesn't replicate repository settings, deletes or lifecycle expiry. Each replica region therefore gets its own
 `REPLICATION` copy of every creation template, and expires its own untagged images under the same rules. KMS keys are

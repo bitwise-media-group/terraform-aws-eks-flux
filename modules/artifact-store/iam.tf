@@ -45,9 +45,9 @@ locals {
   chart_publisher_subjects = ["repo:${local.containers_subject_repo}:ref:refs/heads/main"]
 
   # Every manifest publisher is trusted from the same three contexts: release
-  # tags publish versioned artifacts and move `staging`; merges to main
-  # publish the `edge` channel; the protected promotion environment moves
-  # `stable`.
+  # tags publish staging builds; merges to main publish edge builds; the
+  # protected promotion environment adds the stable vX.Y.Z tag to a staging
+  # build. No tag ever moves.
   manifest_publisher_subjects = {
     for repo, subject_repo in local.manifest_subject_repos : repo => [
       "repo:${subject_repo}:ref:refs/heads/main",

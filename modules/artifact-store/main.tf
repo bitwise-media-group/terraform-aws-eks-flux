@@ -17,12 +17,18 @@
 # tag mutability, encryption and tags. Without a matching template ECR refuses
 # to create on push at all, so the templates are essential, not a nicety.
 #
-# Every tag is IMMUTABLE except the channel tags on the manifest images: ECR
-# applies the template with the longest matching prefix, so <prefix>/manifests
-# gets its own template that exempts exactly those tags.
+# Every tag is IMMUTABLE, the channels included: no tag ever moves. A channel
+# is its newest immutable build - <base>-edge.<UTC yyyymmddhhmmss>.g<short
+# commit> on every merge to main, X.Y.Z-staging.<...> on every release, and
+# the plain vX.Y.Z promotion adds to a staging build - which consumers follow
+# as a semver range. The lifecycle policy keeps every promoted release and the
+# newest builds of each channel, and ages out the rest. A template only
+# applies to repositories ECR creates after it changes: repositories that
+# already exist keep their mutability and lifecycle policy until updated
+# separately (aws ecr put-image-tag-mutability / put-lifecycle-policy).
 #
 # REPLICAS: publishers push to this (the primary) region only, and ECR
-# replication copies every push - channel-tag moves included - to each of
+# replication copies every push to each of
 # replica_regions in this same account. Clusters read the replica in their own
 # region, so none of them depends on the primary region being up. Repository
 # settings are not replicated: a replica repository gets its tag mutability,
@@ -64,10 +70,6 @@ locals {
 
   repository_arn_pattern = local.repository_arn_patterns[local.region]
 
-  # Release tags move staging, merges to main move edge, the promotion
-  # environment moves stable.
-  manifest_channel_tags = ["edge", "stable", "staging"]
-
   # The settings every region's templates share; only the encryption key and
   # the trigger (CREATE_ON_PUSH in the primary, REPLICATION in a replica)
   # differ between regions.
@@ -82,9 +84,9 @@ locals {
     # Wins over the platform template for <prefix>/manifests/* (longest prefix).
     manifests = {
       prefix               = "${var.repository_prefix}/manifests"
-      description          = "Platform artifact store manifest images: immutable version tags, movable channel tags"
-      image_tag_mutability = "IMMUTABLE_WITH_EXCLUSION"
-      exclusion_tags       = local.manifest_channel_tags
+      description          = "Platform artifact store manifest images: every tag immutable, channels as builds"
+      image_tag_mutability = "IMMUTABLE"
+      exclusion_tags       = []
     }
   }
 
@@ -93,11 +95,63 @@ locals {
     "${pair[0]}/${pair[1]}" => merge(local.templates[pair[1]], { region = pair[0] })
   }
 
-  # Untagged manifests are what failed and superseded pushes leave behind.
+  # ECR never lets a rule expire an image whose tags a higher-priority rule
+  # selects, so the order is the protection: promoted releases (vX.Y.Z, and
+  # mirrored upstream v-tags) first, kept far beyond any real count; then the
+  # newest staging and edge builds of each repository; then commit tags
+  # (sha-<commit>) left on no channel build, by age. A promoted release also
+  # carries its staging and sha tags, and a channel build its sha tag: rule 1
+  # and rules 2-3 shield them. Untagged manifests are what failed and
+  # superseded pushes leave behind.
   lifecycle_policy = jsonencode({
     rules = [
       {
         rulePriority = 1
+        description  = "Keep promoted releases (v*): the newest ${var.release_retention_count}"
+        selection = {
+          tagStatus      = "tagged"
+          tagPatternList = ["v*"]
+          countType      = "imageCountMoreThan"
+          countNumber    = var.release_retention_count
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 2
+        description  = "Keep the newest ${var.staging_retention_count} staging builds"
+        selection = {
+          tagStatus      = "tagged"
+          tagPatternList = ["*-staging.*"]
+          countType      = "imageCountMoreThan"
+          countNumber    = var.staging_retention_count
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 3
+        description  = "Keep the newest ${var.edge_retention_count} edge builds"
+        selection = {
+          tagStatus      = "tagged"
+          tagPatternList = ["*-edge.*"]
+          countType      = "imageCountMoreThan"
+          countNumber    = var.edge_retention_count
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 4
+        description  = "Expire commit tags on no channel build after ${var.commit_expiry_days} days"
+        selection = {
+          tagStatus      = "tagged"
+          tagPatternList = ["sha-*"]
+          countType      = "sinceImagePushed"
+          countUnit      = "days"
+          countNumber    = var.commit_expiry_days
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 5
         description  = "Expire untagged manifests after ${var.untagged_expiry_days} days"
         selection = {
           tagStatus   = "untagged"

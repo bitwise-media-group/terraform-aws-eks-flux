@@ -24,10 +24,19 @@ ECR has no arbitrary-path model. Every one of those paths is a real repository t
 and ECR creates the repository with the template's lifecycle policy, tag mutability, encryption and tags. Without a
 matching template, ECR refuses to create on push at all.
 
-Tags are **immutable**, so a published tag can never be re-pointed at a different digest. The one exception is the
-channel tags (`staging`, `stable`, `edge`) on the manifest images, which must move between releases. ECR applies the
-creation template with the longest matching prefix, so `<prefix>/manifests` gets its own template:
-`IMMUTABLE_WITH_EXCLUSION`, exempting exactly those three tags. Version tags stay immutable everywhere.
+Tags are **immutable**, so a published tag can never be re-pointed at a different digest, and no tag ever moves. A
+channel is its newest immutable build: every merge to `main` publishes
+`<base>-edge.<UTC yyyymmddhhmmss>.g<short commit>` (`0.1.0-edge.20261109153012.g70d3589`), every release
+`X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<short commit>`, and promotion adds the plain `vX.Y.Z` to a staging build.
+Consumers follow a channel as a semver range narrowed to its builds (see [the contract](contract.md)). Every build also
+carries `sha-<commit>`.
+
+Every template also sets the lifecycle policy, in priority order: keep promoted releases (`v*`, shielded far beyond any
+real count), keep the newest 20 staging and the newest 20 edge builds, expire `sha-*` images on no release or channel
+build 30 days after push, and expire untagged manifests after 14 days. ECR never lets a rule expire an image a
+higher-priority rule's tags select, so a promoted release (which also carries its staging and sha tags) and the newest
+channel builds are never aged out. A creation template only applies to repositories ECR creates after it changes:
+existing repositories keep their mutability and lifecycle policy until updated separately.
 
 ### Who can push
 
@@ -37,9 +46,10 @@ OIDC provider, and each role can push only to its own paths:
 - **The chart publisher** (flux-containers) pushes `charts/*` and `images/*`, from its default branch only. Pull request
   validation never gets push credentials.
 - **One manifest publisher per repo** in `github.manifest_publishers`. Each is trusted from three contexts: release
-  tags, which publish versions and move `staging`; merges to `main`, which publish `edge`; and the protected promotion
-  environment, which moves `stable`. The platform repo keeps `manifests/*` because it's the platform authority. An
-  application repo gets `manifests/<app>` only, so it can never overwrite the platform or another application.
+  tags, which publish staging builds; merges to `main`, which publish edge builds; and the protected promotion
+  environment, which adds the stable `vX.Y.Z` tag to a staging build. The platform repo keeps `manifests/*` because it's
+  the platform authority. An application repo gets `manifests/<app>` only, so it can never overwrite the platform or
+  another application.
 
 GitHub's OIDC subjects for repos created after 2026-07-15 embed numeric ids:
 `repo:<org>@<org id>/<repo>@<repo id>:<context>`. The trust policies pin those ids. Until a publisher's `repository_id`
@@ -60,10 +70,9 @@ store.
 
 ## Regional replicas
 
-Publishers push to the store's primary region only. ECR replication copies every push, including channel-tag moves, to
-each of the store's `replica_regions`, all in the store's own account. A cluster reads the replica in its own region, so
-a primary-region outage stops new releases from arriving but never stops a cluster reconciling what it already runs, or
-bootstrapping.
+Publishers push to the store's primary region only. ECR replication copies every push to each of the store's
+`replica_regions`, all in the store's own account. A cluster reads the replica in its own region, so a primary-region
+outage stops new releases from arriving but never stops a cluster reconciling what it already runs, or bootstrapping.
 
 ECR doesn't replicate repository settings. A replica repository gets its tag mutability, encryption and lifecycle only
 from a creation template in its own region, so the store keeps a REPLICATION copy of each template in every replica

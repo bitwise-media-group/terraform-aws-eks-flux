@@ -74,7 +74,7 @@ variable "account_ids" {
 variable "replica_regions" {
   description = <<-EOT
     Regions, in this same account, the store is replicated to - one per region clusters run in outside the primary
-    (the region this module is applied in). Every push, channel-tag moves included, is copied to each, and a cluster
+    (the region this module is applied in). Every push is copied to each, and a cluster
     reads the replica in its own region (the platform_registries output), so it keeps reconciling while the primary
     region is down. Each replica gets the same creation templates (as REPLICATION templates), registry policy and
     scanning. Only pushes made after a region is added replicate: run that region's
@@ -156,7 +156,7 @@ variable "github" {
 }
 
 variable "promotion_environment" {
-  description = "GitHub environment (protected, reviewer-gated) whose jobs may move the stable channel tag."
+  description = "GitHub environment (protected, reviewer-gated) whose jobs promote a staging build to stable (its vX.Y.Z tag)."
   type        = string
   nullable    = false
   default     = "production"
@@ -225,6 +225,58 @@ variable "enhanced_scanning" {
   type        = bool
   nullable    = false
   default     = true
+}
+
+variable "release_retention_count" {
+  description = <<-EOT
+    How many promoted releases (v* tags) each repository keeps. The lifecycle policy's first rule: it exists to shield
+    every promoted release (which also carries a staging and a sha tag) from the rules below it, so the default is far
+    beyond any real count.
+  EOT
+  type        = number
+  nullable    = false
+  default     = 10000
+
+  validation {
+    condition     = var.release_retention_count >= 1
+    error_message = "release_retention_count must be at least 1."
+  }
+}
+
+variable "staging_retention_count" {
+  description = "How many staging builds (X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<commit>) each repository keeps, newest first."
+  type        = number
+  nullable    = false
+  default     = 20
+
+  validation {
+    condition     = var.staging_retention_count >= 1
+    error_message = "staging_retention_count must be at least 1: the newest staging build is what staging clusters follow."
+  }
+}
+
+variable "edge_retention_count" {
+  description = "How many edge builds (<base>-edge.<UTC yyyymmddhhmmss>.g<commit>) each repository keeps, newest first."
+  type        = number
+  nullable    = false
+  default     = 20
+
+  validation {
+    condition     = var.edge_retention_count >= 1
+    error_message = "edge_retention_count must be at least 1: the newest edge build is what edge clusters follow."
+  }
+}
+
+variable "commit_expiry_days" {
+  description = "Days after push at which an image tagged only sha-<commit> (on no release or channel build) is deleted."
+  type        = number
+  nullable    = false
+  default     = 30
+
+  validation {
+    condition     = var.commit_expiry_days >= 1
+    error_message = "commit_expiry_days must be at least 1."
+  }
 }
 
 variable "untagged_expiry_days" {
