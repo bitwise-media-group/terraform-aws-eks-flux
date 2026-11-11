@@ -73,7 +73,7 @@ variables {
   }
 
   signed_identity = {
-    manifests_subject  = "^https://github\\.com/bitwise-media-group/flux-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+    manifests_subject  = "^https://github\\.com/bitwise-media-group/flux-manifests/\\.github/workflows/release\\.yaml@refs/heads/main$"
     containers_subject = "^https://github\\.com/bitwise-media-group/flux-containers/\\.github/workflows/publish\\.yaml@refs/heads/main$"
   }
 }
@@ -604,31 +604,26 @@ run "sync_channel_edge" {
   }
 }
 
-run "sync_channel_staging" {
+# There is no staging channel: a release is promoted straight from edge.
+run "sync_rejects_staging" {
   command = plan
 
   variables {
     flux = { sync = { ref = "staging" } }
   }
 
-  assert {
-    condition = (
-      local.reserved_cluster_vars.FLUX_SYNC_SEMVER == ">=0.0.0-0"
-      && local.reserved_cluster_vars.FLUX_SYNC_SEMVER_FILTER == "^[0-9]+[.][0-9]+[.][0-9]+-staging[.][0-9]{14}[.]g[0-9a-f]{7,40}$"
-    )
-    error_message = "staging follows its newest immutable build: every pre-release, narrowed to the staging builds"
-  }
+  expect_failures = [var.flux]
 }
 
 run "sync_pinned_build" {
   command = plan
 
   variables {
-    flux = { sync = { ref = "1.4.0-staging.20261112090000.g1a2b3c4" } }
+    flux = { sync = { ref = "1.4.0-edge.20261112090000.g1a2b3c4" } }
   }
 
   assert {
-    condition     = local.reserved_cluster_vars.FLUX_SYNC_SEMVER == "1.4.0-staging.20261112090000.g1a2b3c4" && local.reserved_cluster_vars.FLUX_SYNC_SEMVER_FILTER == ""
+    condition     = local.reserved_cluster_vars.FLUX_SYNC_SEMVER == "1.4.0-edge.20261112090000.g1a2b3c4" && local.reserved_cluster_vars.FLUX_SYNC_SEMVER_FILTER == ""
     error_message = "a pinned build tag is followed verbatim, with no filter"
   }
 }
@@ -1670,7 +1665,7 @@ run "applications_seeded" {
         url        = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
         semver     = "<1.0.0 >=0.1.0"
         depends_on = ["kyverno-policies", "gateway"]
-        verify     = { subject = "^https://github\\.com/org/demo-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$" }
+        verify     = { subject = "^https://github\\.com/org/demo-app-manifests/\\.github/workflows/release\\.yaml@refs/heads/main$" }
       }
       external = {
         url         = "oci://ghcr.io/org/external-manifests"

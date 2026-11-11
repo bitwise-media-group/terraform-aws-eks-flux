@@ -44,15 +44,13 @@ locals {
   # default branch only - PR validation never gets push credentials.
   chart_publisher_subjects = ["repo:${local.containers_subject_repo}:ref:refs/heads/main"]
 
-  # Every manifest publisher is trusted from the same three contexts: release
-  # tags publish staging builds; merges to main publish edge builds; the
-  # protected promotion environment adds the stable vX.Y.Z tag to a staging
-  # build. No tag ever moves.
+  # Every manifest publisher is trusted from main alone: its release
+  # workflow's publish job pushes an edge build on every push that cuts no
+  # release, and promotes the newest edge build of the version (adding the
+  # stable vX.Y.Z tag) when one is cut. No tag ever moves.
   manifest_publisher_subjects = {
     for repo, subject_repo in local.manifest_subject_repos : repo => [
       "repo:${subject_repo}:ref:refs/heads/main",
-      "repo:${subject_repo}:ref:refs/tags/v*",
-      "repo:${subject_repo}:environment:${var.promotion_environment}",
     ]
   }
 
@@ -105,11 +103,9 @@ data "aws_iam_policy_document" "publisher_assume_role" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # StringLike, not StringEquals: the release-tag subject carries a glob
-    # (refs/tags/v*). Every other subject in the list is literal, so the
-    # weaker operator costs nothing.
+    # Every subject is literal.
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
       values   = each.value
     }

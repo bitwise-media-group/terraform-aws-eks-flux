@@ -52,8 +52,9 @@ you elect `arc`. The cluster bootstrap pulls the Cilium and flux charts from the
 
 ## 4. Publish the platform
 
-Cut a flux-manifests release. Its publish workflow pushes every component image, then the platform entrypoint
-(`manifests/platform`), and moves the `staging` tag on each.
+Merge to flux-manifests' `main`. Its release workflow pushes an edge build of every component image, then of the
+platform entrypoint (`manifests/platform`). Cutting a release promotes those same builds to `vX.Y.Z`; nothing is
+rebuilt. A cluster on the default `stable` channel needs that first release.
 
 ## 5. Publish application images
 

@@ -61,7 +61,7 @@ variable "sync" {
   EOT
   type = object({
     url           = string # oci://<registry>/manifests/platform
-    ref           = string # channel (stable, staging, edge) or exact version
+    ref           = string # channel (stable, edge) or exact version
     semver        = optional(string)
     semver_filter = optional(string, "")
     path          = string # the per-cloud tree ("aws" for this module)

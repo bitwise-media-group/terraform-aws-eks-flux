@@ -76,18 +76,16 @@ output "manifest_publishers" {
   description = <<-EOT
     One manifest publisher role per github.manifest_publishers key: the role-to-assume input of
     aws-actions/configure-aws-credentials in that repo (its AWS_MANIFEST_PUBLISHER_ROLE variable), the paths it may
-    push, and the Fulcio certificate-subject regexps of its publish workflows (release tags and the edge channel) -
-    an application repo's release subject is what the cluster module's applications[*].verify.subject pins.
+    push, and the Fulcio certificate-subject regexp of its release workflow on main (which signs edge builds and
+    the releases promoted from them) - what the cluster module's applications[*].verify.subject pins for that repo
+    alone.
   EOT
   value = {
     for repo, role in aws_iam_role.manifest_publisher : repo => {
-      name  = role.name
-      arn   = role.arn
-      paths = var.github.manifest_publishers[repo].paths
-      subjects = {
-        release = "^https://github\\.com/${var.github.org}/${repo}/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
-        edge    = "^https://github\\.com/${var.github.org}/${repo}/\\.github/workflows/publish-edge\\.yaml@refs/heads/main$"
-      }
+      name    = role.name
+      arn     = role.arn
+      paths   = var.github.manifest_publishers[repo].paths
+      subject = "^https://github\\.com/${var.github.org}/${replace(repo, ".", "\\.")}/\\.github/workflows/release\\.yaml@refs/heads/main$"
     }
   }
 }
@@ -98,13 +96,10 @@ output "oidc_provider_arn" {
 }
 
 output "signed_identity_subjects" {
-  description = "Fulcio certificate-subject regexps for the chart mirror and the platform manifests publisher (keyless mode) - feed these to the cluster module's signed_identity variable. Cloud-agnostic: the signer is GitHub, not the hosting cloud. Irrelevant when signing_kms_key_arn selects KMS signing. Application publishers' subjects ride in manifest_publishers."
+  description = "Fulcio certificate-subject regexps for the chart mirror and the manifests publishers (keyless mode) - feed these to the cluster module's signed_identity variable. manifests admits the release workflow on main of every repo github.manifest_signers matches, whichever channel (edge or stable) a cluster follows. Cloud-agnostic: the signer is GitHub, not the hosting cloud. Irrelevant when signing_kms_key_arn selects KMS signing. Each publisher's own subject rides in manifest_publishers."
   value = {
     containers = "^https://github\\.com/${var.github.org}/${var.github.containers}/\\.github/workflows/publish\\.yaml@refs/heads/main$"
-    manifests  = "^https://github\\.com/${var.github.org}/${var.github.platform}/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
-    # edge channel: dev/sandbox clusters tracking trunk pass this as
-    # signed_identity.manifests_subject instead of the release identity above
-    manifests_edge = "^https://github\\.com/${var.github.org}/${var.github.platform}/\\.github/workflows/publish-edge\\.yaml@refs/heads/main$"
+    manifests  = "^https://github\\.com/${var.github.org}/${var.github.manifest_signers}/\\.github/workflows/release\\.yaml@refs/heads/main$"
   }
 }
 

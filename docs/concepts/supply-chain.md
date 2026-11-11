@@ -25,18 +25,18 @@ and ECR creates the repository with the template's lifecycle policy, tag mutabil
 matching template, ECR refuses to create on push at all.
 
 Tags are **immutable**, so a published tag can never be re-pointed at a different digest, and no tag ever moves. A
-channel is its newest immutable build: every merge to `main` publishes
-`<base>-edge.<UTC yyyymmddhhmmss>.g<short commit>` (`0.1.0-edge.20261109153012.g70d3589`), every release
-`X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<short commit>`, and promotion adds the plain `vX.Y.Z` to a staging build.
-Consumers follow a channel as a semver range narrowed to its builds (see [the contract](contract.md)). Every build also
-carries `sha-<commit>`.
+channel is its newest immutable build: every push to `main` that cuts no release publishes
+`<next version>-edge.<UTC yyyymmddhhmmss>.g<short commit>` (`0.1.0-edge.20261109153012.g70d3589`), and cutting a release
+promotes the newest edge build of that version by adding the plain `vX.Y.Z` to it, never rebuilding. Consumers follow a
+channel as a semver range narrowed to its builds (see [the contract](contract.md)). Every build also carries
+`sha-<commit>`.
 
 Every template also sets the lifecycle policy, in priority order: keep promoted releases (`v*`, shielded far beyond any
-real count), keep the newest 20 staging and the newest 20 edge builds, expire `sha-*` images on no release or channel
-build 30 days after push, and expire untagged manifests after 14 days. ECR never lets a rule expire an image a
-higher-priority rule's tags select, so a promoted release (which also carries its staging and sha tags) and the newest
-channel builds are never aged out. A creation template only applies to repositories ECR creates after it changes:
-existing repositories keep their mutability and lifecycle policy until updated separately.
+real count), keep the newest 20 edge builds, expire `sha-*` images on no release or channel build 30 days after push,
+and expire untagged manifests after 14 days. ECR never lets a rule expire an image a higher-priority rule's tags select,
+so a promoted release (which also carries its edge and sha tags) and the newest channel builds are never aged out. A
+creation template only applies to repositories ECR creates after it changes: existing repositories keep their mutability
+and lifecycle policy until updated separately.
 
 ### Who can push
 
@@ -45,11 +45,11 @@ OIDC provider, and each role can push only to its own paths:
 
 - **The chart publisher** (flux-containers) pushes `charts/*` and `images/*`, from its default branch only. Pull request
   validation never gets push credentials.
-- **One manifest publisher per repo** in `github.manifest_publishers`. Each is trusted from three contexts: release
-  tags, which publish staging builds; merges to `main`, which publish edge builds; and the protected promotion
-  environment, which adds the stable `vX.Y.Z` tag to a staging build. The platform repo keeps `manifests/*` because it's
-  the platform authority. An application repo gets `manifests/<app>` only, so it can never overwrite the platform or
-  another application.
+- **One manifest publisher per repo** in `github.manifest_publishers`. Each is trusted from `main` only: the publish job
+  of the repo's release workflow pushes an edge build on every push that cuts no release, and adds the stable `vX.Y.Z`
+  tag to the newest edge build when one is cut. The platform repo keeps `manifests/*` because it's the platform
+  authority. An application repo gets `manifests/<app>` only, so it can never overwrite the platform or another
+  application.
 
 GitHub's OIDC subjects for repos created after 2026-07-15 embed numeric ids:
 `repo:<org>@<org id>/<repo>@<repo id>:<context>`. The trust policies pin those ids. Until a publisher's `repository_id`
@@ -110,8 +110,9 @@ registry.
 
     - `manifests_subject` and `containers_subject` are Go regexps matched against the signing certificate's subject.
       The artifact store's `signed_identity_subjects` output provides them.
-    - A dev cluster tracking the `edge` channel passes `signed_identity_subjects.manifests_edge` as
-      `manifests_subject` instead, since edge images are signed by a different workflow.
+    - `manifests_subject` admits the release workflow on `main` of every org repo that `github.manifest_signers`
+      matches (all of them by default). Edge builds and the releases promoted from them carry the same signer, so one
+      subject serves either channel. IAM push separation, not the subject, keeps one repo off another's paths.
     - `issuer` defaults to GitHub Actions' token issuer.
     - Because GitHub is the signer, the same values work for clusters on any cloud.
 

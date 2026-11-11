@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 # Every surface on: the central store's replica in this region, the DNS/TLS
-# wiring, reserved Gateway addresses, RBAC access entries, SSO, the staging sync
+# wiring, reserved Gateway addresses, RBAC access entries, SSO, the edge sync
 # channel, the electable platform components and one seeded application
 # (patchy) composed the way a real root composes it - the application's own
 # module emits the maps, the cluster module consumes them, and nothing
@@ -74,7 +74,7 @@ locals {
       timeout    = "10m"
       depends_on = ["kyverno-policies", "gateway", "secret-sync"]
       verify = {
-        subject = "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+        subject = "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/release\\.yaml@refs/heads/main$"
       }
     }
 
@@ -86,7 +86,7 @@ locals {
       CLAUDE_PROVIDER                  = "anthropic"
       CLAUDE_ANTHROPIC_AUTH            = "token"
       PATCHY_MANIFESTS_SEMVER          = "<1.0.0 >=0.1.0"
-      SIGNED_IDENTITY_PATCHY_MANIFESTS = "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+      SIGNED_IDENTITY_PATCHY_MANIFESTS = "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/release\\.yaml@refs/heads/main$"
     }
   }
 }
@@ -179,9 +179,9 @@ module "cluster" {
 
   flux = {
     sync = {
-      # this environment tracks the staging channel; production consumers track
-      # stable (the default)
-      ref = "staging"
+      # this environment tracks trunk (the edge channel); production consumers
+      # track stable (the default). Both carry the same signer.
+      ref = "edge"
     }
 
     # the application's namespaces exist from minute zero so its secrets

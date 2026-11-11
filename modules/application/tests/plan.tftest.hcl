@@ -52,7 +52,7 @@ variables {
     url    = "oci://123456789012.dkr.ecr.eu-west-2.amazonaws.com/platform/manifests/demo"
     semver = "<1.0.0 >=0.1.0"
     verify = {
-      subject = "^https://github\\.com/org/demo/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+      subject = "^https://github\\.com/org/demo/\\.github/workflows/release\\.yaml@refs/heads/main$"
     }
   }
 }
@@ -204,7 +204,8 @@ run "channel_seed" {
   }
 }
 
-run "staging_seed" {
+# There is no staging channel: a release is promoted straight from edge.
+run "staging_channel_rejected" {
   command = plan
 
   variables {
@@ -215,13 +216,7 @@ run "staging_seed" {
     }
   }
 
-  assert {
-    condition = (
-      yamldecode(helm_release.seed.values[0]).semver == ">=0.0.0-0"
-      && yamldecode(helm_release.seed.values[0]).includeTag == "^[0-9]+[.][0-9]+[.][0-9]+-staging[.][0-9]{14}[.]g[0-9a-f]{7,40}$"
-    )
-    error_message = "staging must follow every pre-release, narrowed to the staging builds"
-  }
+  expect_failures = [var.image]
 }
 
 run "stable_seed" {

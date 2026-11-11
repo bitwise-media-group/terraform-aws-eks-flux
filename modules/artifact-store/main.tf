@@ -18,10 +18,10 @@
 # to create on push at all, so the templates are essential, not a nicety.
 #
 # Every tag is IMMUTABLE, the channels included: no tag ever moves. A channel
-# is its newest immutable build - <base>-edge.<UTC yyyymmddhhmmss>.g<short
-# commit> on every merge to main, X.Y.Z-staging.<...> on every release, and
-# the plain vX.Y.Z promotion adds to a staging build - which consumers follow
-# as a semver range. The lifecycle policy keeps every promoted release and the
+# is its newest immutable build - <next version>-edge.<UTC
+# yyyymmddhhmmss>.g<short commit> on every push to main that cuts no release,
+# and the plain vX.Y.Z that cutting a release adds to the newest edge build of
+# that version - which consumers follow as a semver range. The lifecycle policy keeps every promoted release and the
 # newest builds of each channel, and ages out the rest. A template only
 # applies to repositories ECR creates after it changes: repositories that
 # already exist keep their mutability and lifecycle policy until updated
@@ -98,11 +98,10 @@ locals {
   # ECR never lets a rule expire an image whose tags a higher-priority rule
   # selects, so the order is the protection: promoted releases (vX.Y.Z, and
   # mirrored upstream v-tags) first, kept far beyond any real count; then the
-  # newest staging and edge builds of each repository; then commit tags
-  # (sha-<commit>) left on no channel build, by age. A promoted release also
-  # carries its staging and sha tags, and a channel build its sha tag: rule 1
-  # and rules 2-3 shield them. Untagged manifests are what failed and
-  # superseded pushes leave behind.
+  # newest edge builds of each repository; then commit tags (sha-<commit>)
+  # left on no channel build, by age. A promoted release also carries its edge
+  # and sha tags, and an edge build its sha tag: rules 1 and 2 shield them.
+  # Untagged manifests are what failed and superseded pushes leave behind.
   lifecycle_policy = jsonencode({
     rules = [
       {
@@ -118,17 +117,6 @@ locals {
       },
       {
         rulePriority = 2
-        description  = "Keep the newest ${var.staging_retention_count} staging builds"
-        selection = {
-          tagStatus      = "tagged"
-          tagPatternList = ["*-staging.*"]
-          countType      = "imageCountMoreThan"
-          countNumber    = var.staging_retention_count
-        }
-        action = { type = "expire" }
-      },
-      {
-        rulePriority = 3
         description  = "Keep the newest ${var.edge_retention_count} edge builds"
         selection = {
           tagStatus      = "tagged"
@@ -139,7 +127,7 @@ locals {
         action = { type = "expire" }
       },
       {
-        rulePriority = 4
+        rulePriority = 3
         description  = "Expire commit tags on no channel build after ${var.commit_expiry_days} days"
         selection = {
           tagStatus      = "tagged"
@@ -151,7 +139,7 @@ locals {
         action = { type = "expire" }
       },
       {
-        rulePriority = 5
+        rulePriority = 4
         description  = "Expire untagged manifests after ${var.untagged_expiry_days} days"
         selection = {
           tagStatus   = "untagged"

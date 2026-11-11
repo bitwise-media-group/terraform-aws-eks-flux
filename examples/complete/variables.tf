@@ -31,7 +31,7 @@ variable "store" {
 }
 
 variable "signed_identity_subjects" {
-  description = "Cosign keyless subjects from the artifact-store module's signed_identity_subjects output (use manifests_edge instead of manifests on a cluster tracking the edge channel)."
+  description = "Cosign keyless subjects from the artifact-store module's signed_identity_subjects output (the same manifests subject verifies the edge and stable channels)."
   type = object({
     manifests  = string
     containers = string

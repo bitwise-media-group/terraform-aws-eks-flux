@@ -37,7 +37,7 @@ variables {
 
   signed_identity = {
     issuer            = "^https://token\\.actions\\.githubusercontent\\.com$"
-    manifests_subject = "^https://github\\.com/bitwise-media-group/flux-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+    manifests_subject = "^https://github\\.com/bitwise-media-group/flux-manifests/\\.github/workflows/release\\.yaml@refs/heads/main$"
   }
 
   registry_arn = "arn:aws:ecr:eu-west-2:123456789012:repository/platform/*"
@@ -269,7 +269,7 @@ run "application_seeds" {
         verify = {
           keyed   = false
           issuer  = "^https://token\\.actions\\.githubusercontent\\.com$"
-          subject = "^https://github\\.com/org/demo/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
+          subject = "^https://github\\.com/org/demo/\\.github/workflows/release\\.yaml@refs/heads/main$"
         }
         prune   = true
         wait    = true

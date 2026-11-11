@@ -24,16 +24,16 @@ The runnable version is [`examples/artifact-store`](../getting-started/examples.
 
 ## What it creates
 
-| Resource                                | Purpose                                                                                                                                                                         |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Repository creation templates           | `CREATE_ON_PUSH` in the primary and `REPLICATION` in each replica region: lifecycle policy, immutable tags (`manifests/` exempts `edge`, `stable`, `staging`), encryption, tags |
-| Template service role                   | The role ECR assumes when it creates a repository, in any region                                                                                                                |
-| Replication configuration               | Copies every push beneath the prefix to each of `replica_regions`, in the same account (only when `replica_regions` is set)                                                     |
-| Registry policies                       | Org-wide read (pull and tag listing) in every region                                                                                                                            |
-| Enhanced scanning configurations        | Scanning across the platform prefix in every region (`enhanced_scanning`)                                                                                                       |
-| Chart publisher role                    | flux-containers: push to `charts/*` and `images/*` from its default branch                                                                                                      |
-| One manifest publisher role per repo    | Push to the declared `paths`, from release tags, `main` and the promotion environment                                                                                           |
-| GitHub Actions OIDC provider (optional) | Created only when `oidc_provider_arn` isn't passed                                                                                                                              |
+| Resource                                | Purpose                                                                                                                      |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Repository creation templates           | `CREATE_ON_PUSH` in the primary and `REPLICATION` in each replica region: lifecycle policy, immutable tags, encryption, tags |
+| Template service role                   | The role ECR assumes when it creates a repository, in any region                                                             |
+| Replication configuration               | Copies every push beneath the prefix to each of `replica_regions`, in the same account (only when `replica_regions` is set)  |
+| Registry policies                       | Org-wide read (pull and tag listing) in every region                                                                         |
+| Enhanced scanning configurations        | Scanning across the platform prefix in every region (`enhanced_scanning`)                                                    |
+| Chart publisher role                    | flux-containers: push to `charts/*` and `images/*` from its default branch                                                   |
+| One manifest publisher role per repo    | Push to the declared `paths`, from `main`                                                                                    |
+| GitHub Actions OIDC provider (optional) | Created only when `oidc_provider_arn` isn't passed                                                                           |
 
 The store holds no signing key. Artifacts are signed keylessly by the publishing workflows, or with the
 [kms-signing-key](kms-signing-key.md) when `signing_kms_key_arn` is set, which grants the publisher roles `kms:Sign`.
@@ -49,24 +49,25 @@ The store holds no signing key. Artifacts are signed keylessly by the publishing
 | `<prefix>/manifests/<application>`                              | that application's repo (paths `manifests/<application>`)  |
 
 Each repo sets its role's ARN, from the `manifest_publishers["<repo>"].arn` output, as its `AWS_MANIFEST_PUBLISHER_ROLE`
-variable. The same output carries each repo's signing subjects (`subjects.release`, `subjects.edge`). An application's
-`release` subject is what the cluster module's `applications[*].verify.subject` pins.
+variable. The same output carries each repo's own signing subject (`subject`): its release workflow on `main`. Pin it in
+the cluster module's `applications[*].verify.subject` to trust that repo alone.
 
-### Trust contexts
+### Trust context
 
-Every manifest publisher is trusted from the same three GitHub contexts:
+Every manifest publisher is trusted from one GitHub context, `main`, where the publish job of its release workflow runs:
 
-| Context                   | Publishes                                                             |
-| ------------------------- | --------------------------------------------------------------------- |
-| `v*` release tags         | staging builds (`X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<short commit>`) |
-| merges to `main`          | edge builds (`<base>-edge.<UTC yyyymmddhhmmss>.g<short commit>`)      |
-| the promotion environment | the stable `vX.Y.Z` tag on a staging build (`promotion_environment`)  |
+| Release workflow run on `main` | Publishes                                                                                    |
+| ------------------------------ | -------------------------------------------------------------------------------------------- |
+| cuts no release                | an edge build (`<next version>-edge.<UTC yyyymmddhhmmss>.g<short commit>`)                   |
+| cuts release `X.Y.Z`           | the stable `vX.Y.Z` tag, added to the newest `X.Y.Z` edge build (promotion, never a rebuild) |
+
+`signed_identity_subjects.manifests` admits that workflow in every repo `github.manifest_signers` matches: `[^/]+`,
+every org repo, by default. A fork that only trusts some of its repos narrows it, for example to `aip-[^/]+`.
 
 Every tag is immutable; none of them moves. Each creation template's lifecycle policy keeps promoted releases (`v*`,
-`release_retention_count`), the newest `staging_retention_count` (20) staging and `edge_retention_count` (20) edge
-builds, expires `sha-*` images on no release or channel build after `commit_expiry_days` (30), and untagged manifests
-after `untagged_expiry_days` (14). Templates only apply to repositories created after they change: apply the policy to
-existing repositories separately.
+`release_retention_count`), the newest `edge_retention_count` (20) edge builds, expires `sha-*` images on no release or
+channel build after `commit_expiry_days` (30), and untagged manifests after `untagged_expiry_days` (14). Templates only
+apply to repositories created after they change: apply the policy to existing repositories separately.
 
 Repos created after 2026-07-15 present immutable subjects with numeric ids, so set each publisher's `repository_id` as
 soon as the repo exists. Until then the subject falls back to the name-only form, which never matches such a repo.

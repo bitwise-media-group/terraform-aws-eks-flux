@@ -36,7 +36,7 @@ The instance has a single sync: the platform entrypoint image.
 | Input            | Default                                        | Published as                                                           |
 | ---------------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
 | `flux.sync.url`  | `oci://<platform_registry>/manifests/platform` | `FLUX_SYNC_URL`                                                        |
-| `flux.sync.ref`  | `stable` (or `staging`, `edge`, `vX.Y.Z`)      | `FLUX_SYNC_CHANNEL`, and `FLUX_SYNC_SEMVER`, `FLUX_SYNC_SEMVER_FILTER` |
+| `flux.sync.ref`  | `stable` (or `edge`, `vX.Y.Z`)                 | `FLUX_SYNC_CHANNEL`, and `FLUX_SYNC_SEMVER`, `FLUX_SYNC_SEMVER_FILTER` |
 | `flux.sync.path` | `aws`                                          | `PLATFORM_TREE`                                                        |
 
 The entrypoint pins every component to the same channel unless a `<NAME>_MANIFESTS_REF` cluster var overrides one. The
@@ -44,14 +44,14 @@ manifests are per-cloud trees, and `flux.sync.path` selects the `aws` tree (flux
 
 No tag ever moves: every tag in the registry is immutable, and a channel is its newest build.
 
-| Channel   | Each build is tagged                                                                                           | Followed as                                                                              |
-| --------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `edge`    | `<base>-edge.<UTC yyyymmddhhmmss>.g<short commit>`, every merge to main (`0.1.0-edge.20261109153012.g70d3589`) | `>=0.0.0-0`, filtered by `^[0-9]+[.][0-9]+[.][0-9]+-edge[.][0-9]{14}[.]g[0-9a-f]{7,40}$` |
-| `staging` | `X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<short commit>`, every release                                            | `>=0.0.0-0`, filtered by the same regexp with `staging`                                  |
-| `stable`  | `vX.Y.Z`, added to the staging build by promotion                                                              | `>=0.0.0`, which excludes pre-releases                                                   |
+| Channel  | Each build is tagged                                                                                                                       | Followed as                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `edge`   | `<next version>-edge.<UTC yyyymmddhhmmss>.g<short commit>`, every push to main that cuts no release (`0.1.0-edge.20261109153012.g70d3589`) | `>=0.0.0-0`, filtered by `^[0-9]+[.][0-9]+[.][0-9]+-edge[.][0-9]{14}[.]g[0-9a-f]{7,40}$` |
+| `stable` | `vX.Y.Z`, added to the newest `X.Y.Z` edge build when the release is cut (promotion, never a rebuild)                                      | `>=0.0.0`, which excludes pre-releases                                                   |
 
-A pinned `vX.Y.Z` or full build tag is followed verbatim. Every build also carries `sha-<commit>`. `<base>` is the
-publishing repository's current release-please version.
+A pinned `vX.Y.Z` or full build tag is followed verbatim. Every build also carries `sha-<commit>`. `<next version>` is
+the version of the publishing repository's open release pull request. Both channels are signed by the same identity: the
+repository's release workflow on `main`.
 
 The `FluxInstance` sync has no verify or substitution field, and renders its `ref` as a tag only, so all three ride in
 as kustomize patches on the objects it generates: a cosign `verify` block and a `spec.ref` of `semver` (and

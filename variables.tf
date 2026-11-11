@@ -962,11 +962,12 @@ variable "flux" {
     Flux bootstrap knobs. Chart repositories, the distribution registry and the sync url default onto platform_registry
     (sync.url defaults to oci://<registry>/manifests/platform, the platform entrypoint image, and is published as
     FLUX_SYNC_URL - the platform's flux component asserts it on the FluxInstance, which is how a running cluster is
-    re-pointed); sync.ref picks the release channel (stable, staging, or edge for dev clusters tracking trunk -- pair
-    edge with the manifests_edge signing subject), which the entrypoint pins every component to unless a
-    <NAME>_MANIFESTS_REF cluster var overrides one. No tag moves: a channel is its newest immutable build, edge
-    <base>-edge.<UTC yyyymmddhhmmss>.g<short commit>, staging X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<short commit>, and
-    stable the plain vX.Y.Z promotion adds, so the sync follows a semver range (patched onto the sync OCIRepository)
+    re-pointed); sync.ref picks the release channel (stable, or edge for dev clusters tracking trunk), which the
+    entrypoint pins every component to unless a <NAME>_MANIFESTS_REF cluster var overrides one. Both channels carry the
+    same signer (the publishing repo's release workflow on main). No tag moves: a channel is its newest immutable
+    build, edge <next version>-edge.<UTC yyyymmddhhmmss>.g<short commit> and stable the plain vX.Y.Z that cutting a
+    release adds to the newest edge build of that version, so the sync follows a semver range (patched onto the sync
+    OCIRepository)
     published as FLUX_SYNC_SEMVER with its tag regexp as FLUX_SYNC_SEMVER_FILTER (empty for stable); a pinned vX.Y.Z or
     full build tag is followed verbatim. sync.path selects the per-cloud tree ("aws" -- requires platform-manifests >=
     4.0.0), published as PLATFORM_TREE so applications select the same tree.
@@ -1000,11 +1001,11 @@ variable "flux" {
 
   validation {
     condition = (
-      contains(["stable", "staging", "edge"], var.flux.sync.ref)
+      contains(["stable", "edge"], var.flux.sync.ref)
       || can(regex("^v", var.flux.sync.ref))
-      || can(regex("^[0-9]+[.][0-9]+[.][0-9]+-(edge|staging)[.][0-9]{14}[.]g[0-9a-f]{7,40}$", var.flux.sync.ref))
+      || can(regex("^[0-9]+[.][0-9]+[.][0-9]+-edge[.][0-9]{14}[.]g[0-9a-f]{7,40}$", var.flux.sync.ref))
     )
-    error_message = "flux.sync.ref must be a channel (stable, staging, edge), a pinned version tag (vX.Y.Z) or a full build tag (X.Y.Z-edge.<yyyymmddhhmmss>.g<commit>)."
+    error_message = "flux.sync.ref must be a channel (stable, edge), a pinned version tag (vX.Y.Z) or a full build tag (X.Y.Z-edge.<yyyymmddhhmmss>.g<commit>)."
   }
 }
 

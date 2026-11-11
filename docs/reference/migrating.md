@@ -1,5 +1,24 @@
 # Migrating
 
+## Release channels: edge and stable
+
+Every tag is immutable, and there is no `staging` channel any more. A repository's release workflow publishes on `main`
+only: an edge build (`<next version>-edge.<UTC yyyymmddhhmmss>.g<short commit>`) on every push that cuts no release,
+and, when a release is cut, the stable `vX.Y.Z` added to the newest edge build of that version. Edge builds and stable
+releases carry the same signer, the repository's `release.yaml` on `main`.
+
+| Before                                                                     | Now                                                                                                                 |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `flux.sync.ref = "staging"`, `image.channel = "staging"`                   | Rejected. Use `edge` (trunk) or `stable`                                                                            |
+| `signed_identity_subjects.manifests_edge` for an edge cluster              | Removed. `signed_identity_subjects.manifests` verifies both channels                                                |
+| `signed_identity_subjects.manifests`: the platform repo's `publish.yaml`   | The `release.yaml` on `main` of every repo `github.manifest_signers` matches (default `[^/]+`, every org repo)      |
+| `manifest_publishers[*].subjects.release`, `.subjects.edge`                | `manifest_publishers[*].subject`, the repo's `release.yaml` on `main`                                               |
+| publisher roles trusted from `main`, `v*` tags and `promotion_environment` | Trusted from `main` only; `promotion_environment` is removed                                                        |
+| `staging_retention_count` and the `*-staging.*` lifecycle rule             | Removed. Re-apply each existing repository's lifecycle policy (`aws ecr put-lifecycle-policy`) to drop the old rule |
+
+Apply the artifact store and the clusters before the publishing repos switch to their release workflow, or the clusters
+reject the new signatures and stay on the builds they have.
+
 ## Application node groups
 
 `modules/application` no longer takes `node_groups`: an application root calls

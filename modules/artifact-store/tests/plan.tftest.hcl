@@ -89,14 +89,14 @@ run "create_on_push" {
   assert {
     condition = alltrue([
       for name in ["platform", "manifests"] : (
-        [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.rulePriority] == [1, 2, 3, 4, 5]
-        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : try(r.selection.tagPatternList, [])] == [["v*"], ["*-staging.*"], ["*-edge.*"], ["sha-*"], []]
-        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.selection.countNumber] == [10000, 20, 20, 30, 14]
-        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.selection.countType] == ["imageCountMoreThan", "imageCountMoreThan", "imageCountMoreThan", "sinceImagePushed", "sinceImagePushed"]
+        [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.rulePriority] == [1, 2, 3, 4]
+        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : try(r.selection.tagPatternList, [])] == [["v*"], ["*-edge.*"], ["sha-*"], []]
+        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.selection.countNumber] == [10000, 20, 30, 14]
+        && [for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.selection.countType] == ["imageCountMoreThan", "imageCountMoreThan", "sinceImagePushed", "sinceImagePushed"]
         && alltrue([for r in jsondecode(aws_ecr_repository_creation_template.primary[name].lifecycle_policy).rules : r.action.type == "expire"])
       )
     ])
-    error_message = "both templates must shield promoted releases, keep the newest 20 staging and edge builds, then age out commit tags (30 days) and untagged manifests (14 days), in that priority order"
+    error_message = "both templates must shield promoted releases, keep the newest 20 edge builds, then age out commit tags (30 days) and untagged manifests (14 days), in that priority order"
   }
 
   assert {
@@ -357,11 +357,11 @@ run "publisher_trust_pins_numeric_ids" {
     error_message = "a manifest publisher's subject must pin the numeric ids once repository_id is known"
   }
 
-  # main publishes edge builds, tags publish staging builds, the protected
-  # environment promotes a staging build to stable.
+  # The release workflow on main publishes edge builds and promotes releases:
+  # no tag or environment context is trusted.
   assert {
-    condition     = length(local.manifest_publisher_subjects["flux-manifests"]) == 3
-    error_message = "a manifest publisher is trusted from exactly three contexts: main, release tags and the promotion environment"
+    condition     = local.manifest_publisher_subjects["flux-manifests"] == ["repo:bitwise-media-group@282673588/flux-manifests@987654321:ref:refs/heads/main"]
+    error_message = "a manifest publisher is trusted from main alone"
   }
 
   assert {
@@ -442,13 +442,13 @@ run "one_role_per_manifest_publisher" {
   }
 
   assert {
-    condition     = output.manifest_publishers["patchy-app-manifests"].subjects.release == "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
-    error_message = "each publisher's release subject must be exported for the cluster module's applications[*].verify.subject"
+    condition     = output.manifest_publishers["patchy-app-manifests"].subject == "^https://github\\.com/bitwise-media-group/patchy-app-manifests/\\.github/workflows/release\\.yaml@refs/heads/main$"
+    error_message = "each publisher's own release-workflow subject must be exported for the cluster module's applications[*].verify.subject"
   }
 
   assert {
-    condition     = output.signed_identity_subjects.manifests == "^https://github\\.com/bitwise-media-group/flux-manifests/\\.github/workflows/publish\\.yaml@refs/tags/v.+$"
-    error_message = "signed_identity_subjects.manifests must follow the platform publisher (github.platform), not any application"
+    condition     = output.signed_identity_subjects.manifests == "^https://github\\.com/bitwise-media-group/[^/]+/\\.github/workflows/release\\.yaml@refs/heads/main$"
+    error_message = "signed_identity_subjects.manifests must admit the release workflow on main of every org repo by default"
   }
 
   assert {
@@ -467,6 +467,45 @@ run "platform_publisher_must_be_declared" {
         flux-manifests = { paths = ["manifests/*"] }
       }
     }
+  }
+
+  expect_failures = [var.github]
+}
+
+# A fork trusting a subset of the org's repos narrows the signer pattern;
+# each publisher's own subject is unaffected.
+run "manifest_signers_narrow_the_subject" {
+  command = plan
+
+  variables {
+    github = {
+      platform         = "aip-platform-manifests"
+      manifest_signers = "aip-[^/]+"
+      manifest_publishers = {
+        aip-platform-manifests = { paths = ["manifests/*"] }
+      }
+    }
+  }
+
+  assert {
+    condition     = output.signed_identity_subjects.manifests == "^https://github\\.com/bitwise-media-group/aip-[^/]+/\\.github/workflows/release\\.yaml@refs/heads/main$"
+    error_message = "github.manifest_signers must replace the repository part of the manifests subject"
+  }
+
+  assert {
+    condition = (
+      can(regex(output.signed_identity_subjects.manifests, "https://github.com/bitwise-media-group/aip-platform-manifests/.github/workflows/release.yaml@refs/heads/main"))
+      && !can(regex(output.signed_identity_subjects.manifests, "https://github.com/bitwise-media-group/patchy-app-manifests/.github/workflows/release.yaml@refs/heads/main"))
+    )
+    error_message = "the narrowed subject must admit an aip-* repo's release workflow and nothing else"
+  }
+}
+
+run "manifest_signers_reject_anchors" {
+  command = plan
+
+  variables {
+    github = { manifest_signers = "^aip-[^/]+$" }
   }
 
   expect_failures = [var.github]
@@ -521,13 +560,12 @@ run "retention_is_tunable" {
   command = plan
 
   variables {
-    staging_retention_count = 5
-    edge_retention_count    = 50
-    commit_expiry_days      = 7
+    edge_retention_count = 50
+    commit_expiry_days   = 7
   }
 
   assert {
-    condition     = [for r in jsondecode(aws_ecr_repository_creation_template.primary["platform"].lifecycle_policy).rules : r.selection.countNumber] == [10000, 5, 50, 7, 14]
+    condition     = [for r in jsondecode(aws_ecr_repository_creation_template.primary["platform"].lifecycle_policy).rules : r.selection.countNumber] == [10000, 50, 7, 14]
     error_message = "the retention counts and commit expiry must come from their variables"
   }
 }

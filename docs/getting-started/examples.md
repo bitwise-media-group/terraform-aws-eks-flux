@@ -40,7 +40,7 @@ Every surface turned on:
 - the store's replica in the cluster's region
 - DNS/TLS wiring and reserved Gateway addresses
 - RBAC access entries and SSO
-- the `staging` sync channel and the electable platform components
+- the `edge` sync channel and the electable platform components
 - one seeded application (patchy), composed the way a real root composes it
 
 The application's maps are spelled out in `locals` here so the example plans on its own. A real root gets them from the

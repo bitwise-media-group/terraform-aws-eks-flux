@@ -113,17 +113,20 @@ variable "github" {
     containers is the chart/image mirror (flux-containers). manifest_publishers is every repo that publishes manifest
     images, keyed by repo name: the platform's (paths ["manifests/*"], the platform authority) and one per application
     repo (paths ["manifests/<app>"], so an application can never overwrite the platform). Each gets its own role,
-    trusted from main, release tags and the promotion environment, with push scoped to exactly its paths;
-    repository_id may stay null until that repo exists on GitHub. platform names the key that publishes the
-    platform entrypoint - its workflow identities are what signed_identity_subjects exports for the cluster
-    module.
+    trusted from main alone (its release workflow publishes every edge build and promotes every release there), with
+    push scoped to exactly its paths; repository_id may stay null until that repo exists on GitHub. platform names
+    the key that publishes the platform entrypoint. manifest_signers is a Go regexp over a repository name (no org,
+    no anchors; group any alternation) choosing whose release workflows signed_identity_subjects.manifests admits:
+    every repo in the org by default, or a subset such as aip-[^/]+. Push separation, not the signer, keeps one repo from overwriting
+    another's paths.
   EOT
   type = object({
-    org           = optional(string, "bitwise-media-group")
-    org_id        = optional(number, 282673588)
-    containers    = optional(string, "flux-containers")
-    containers_id = optional(number, 1303643498)
-    platform      = optional(string, "flux-manifests")
+    org              = optional(string, "bitwise-media-group")
+    org_id           = optional(number, 282673588)
+    containers       = optional(string, "flux-containers")
+    containers_id    = optional(number, 1303643498)
+    platform         = optional(string, "flux-manifests")
+    manifest_signers = optional(string, "[^/]+")
     manifest_publishers = optional(map(object({
       repository_id = optional(number)
       paths         = list(string)
@@ -134,7 +137,12 @@ variable "github" {
 
   validation {
     condition     = contains(keys(var.github.manifest_publishers), var.github.platform)
-    error_message = "github.platform must name a key of github.manifest_publishers - the platform entrypoint's publisher is what the clusters' signed_identity_subjects pin."
+    error_message = "github.platform must name a key of github.manifest_publishers - the platform entrypoint needs a publisher."
+  }
+
+  validation {
+    condition     = can(regexall(var.github.manifest_signers, "")) && !can(regex("^\\^|[^\\\\]\\$$", var.github.manifest_signers))
+    error_message = "github.manifest_signers must be a valid, unanchored Go regexp over a repository name (e.g. [^/]+ or aip-[^/]+): it is embedded between the org and the workflow path."
   }
 
   validation {
@@ -153,13 +161,6 @@ variable "github" {
     ]))
     error_message = "Each github.manifest_publishers entry needs at least one path beneath the prefix (e.g. manifests/* or manifests/<app>): path segments of ECR name characters, with at most a trailing /* wildcard."
   }
-}
-
-variable "promotion_environment" {
-  description = "GitHub environment (protected, reviewer-gated) whose jobs promote a staging build to stable (its vX.Y.Z tag)."
-  type        = string
-  nullable    = false
-  default     = "production"
 }
 
 variable "oidc_provider_arn" {
@@ -230,7 +231,7 @@ variable "enhanced_scanning" {
 variable "release_retention_count" {
   description = <<-EOT
     How many promoted releases (v* tags) each repository keeps. The lifecycle policy's first rule: it exists to shield
-    every promoted release (which also carries a staging and a sha tag) from the rules below it, so the default is far
+    every promoted release (which also carries its edge and sha tags) from the rules below it, so the default is far
     beyond any real count.
   EOT
   type        = number
@@ -243,20 +244,8 @@ variable "release_retention_count" {
   }
 }
 
-variable "staging_retention_count" {
-  description = "How many staging builds (X.Y.Z-staging.<UTC yyyymmddhhmmss>.g<commit>) each repository keeps, newest first."
-  type        = number
-  nullable    = false
-  default     = 20
-
-  validation {
-    condition     = var.staging_retention_count >= 1
-    error_message = "staging_retention_count must be at least 1: the newest staging build is what staging clusters follow."
-  }
-}
-
 variable "edge_retention_count" {
-  description = "How many edge builds (<base>-edge.<UTC yyyymmddhhmmss>.g<commit>) each repository keeps, newest first."
+  description = "How many edge builds (<next version>-edge.<UTC yyyymmddhhmmss>.g<commit>) each repository keeps, newest first."
   type        = number
   nullable    = false
   default     = 20
