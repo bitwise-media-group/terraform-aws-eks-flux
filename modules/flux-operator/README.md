@@ -28,16 +28,16 @@ anywhere else.
 
 | Name | Version |
 | ---- | ------- |
-| terraform | >= 1.11, < 2.0 |
-| aws | >= 6.0, < 7.0 |
-| helm | ~> 3.0 |
+| terraform | >= 1.11, < 2 |
+| aws | >= 6.0, < 7 |
+| helm | >= 3, < 4 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| aws | >= 6.0, < 7.0 |
-| helm | ~> 3.0 |
+| aws | >= 6.0, < 7 |
+| helm | >= 3, < 4 |
 
 ## Modules
 

@@ -8,7 +8,7 @@ terraform {
   # opposite order (hashicorp/terraform#39076, fixed in 1.16.1), which for
   # the fixed-name cluster meant a CreateCluster call against a cluster that
   # still existed.
-  required_version = ">= 1.11, != 1.16.0, < 2.0"
+  required_version = ">= 1.11, != 1.16.0, < 2"
 
   required_providers {
     # 6.0 is the floor for aws_ecr_repository_creation_template (the
@@ -16,24 +16,24 @@ terraform {
     # secret_string_wo write-only pair, and EKS Pod Identity associations.
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 6.0, < 7.0"
+      version = ">= 6.0, < 7"
     }
     # Cilium is the only chart this module installs; everything else the
     # cluster runs arrives through flux.
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 3.0"
+      version = ">= 3.0, < 4"
     }
     # The ephemeral dex client secrets (sso.tf).
     random = {
       source  = "hashicorp/random"
-      version = ">= 3.7, < 4.0"
+      version = ">= 3.7, < 4"
     }
     # The cluster issuer's certificate thumbprint for the IRSA OIDC provider
     # (iam.tf).
     tls = {
       source  = "hashicorp/tls"
-      version = ">= 4.0, < 5.0"
+      version = ">= 4.0, < 5"
     }
   }
 }

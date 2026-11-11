@@ -435,20 +435,20 @@ shells out to `aws eks get-token` (see the caveat above).
 
 | Name | Version |
 | ---- | ------- |
-| terraform | >= 1.11, != 1.16.0, < 2.0 |
-| aws | >= 6.0, < 7.0 |
-| helm | ~> 3.0 |
-| random | >= 3.7, < 4.0 |
-| tls | >= 4.0, < 5.0 |
+| terraform | >= 1.11, != 1.16.0, < 2 |
+| aws | >= 6.0, < 7 |
+| helm | >= 3.0, < 4 |
+| random | >= 3.7, < 4 |
+| tls | >= 4.0, < 5 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| aws | >= 6.0, < 7.0 |
-| helm | ~> 3.0 |
+| aws | >= 6.0, < 7 |
+| helm | >= 3.0, < 4 |
 | terraform | n/a |
-| tls | >= 4.0, < 5.0 |
+| tls | >= 4.0, < 5 |
 
 ## Modules
 

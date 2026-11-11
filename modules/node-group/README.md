@@ -44,14 +44,14 @@ module "workers" {
 
 | Name | Version |
 | ---- | ------- |
-| terraform | >= 1.11, < 2.0 |
-| aws | >= 6.0, < 7.0 |
+| terraform | >= 1.11, < 2 |
+| aws | >= 6.0, < 7 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| aws | >= 6.0, < 7.0 |
+| aws | >= 6.0, < 7 |
 | terraform | n/a |
 
 ## Modules

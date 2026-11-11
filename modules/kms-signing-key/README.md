@@ -23,14 +23,14 @@ maximum, since deleting the key permanently breaks verification of everything it
 
 | Name | Version |
 | ---- | ------- |
-| terraform | >= 1.11, < 2.0 |
-| aws | >= 6.0, < 7.0 |
+| terraform | >= 1.11, < 2 |
+| aws | >= 6.0, < 7 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| aws | >= 6.0, < 7.0 |
+| aws | >= 6.0, < 7 |
 
 ## Modules
 
