@@ -10,6 +10,9 @@ After the first apply, the application's image owns `<key>-manifests`. Changing 
 does nothing until you remove the key and add it back. Never lift `ignore_changes`. See
 [Applications](../concepts/applications.md#the-hand-over).
 
+This is the cluster root's `applications`. [`modules/application`](../modules/application.md) keeps its seed under
+Terraform on every apply instead, and its images ship no `flux/` copy.
+
 ### A semver range that matches no tag prunes the application
 
 An empty input set empties the `ResourceSet`, which garbage-collects the `Kustomization`, which prunes what it applied.

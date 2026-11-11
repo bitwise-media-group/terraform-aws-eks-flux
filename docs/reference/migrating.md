@@ -1,5 +1,24 @@
 # Migrating
 
+## Application seeds under Terraform
+
+`modules/application` keeps its seed (`application-<name>`: the `<name>-manifests` ResourceSetInputProvider and
+ResourceSet) under Terraform on every apply. It no longer hands the seed to the image (`ignore_changes` is gone), so the
+semver range or channel moves in the same apply as the infrastructure the application's next release needs.
+`image.semver` now combines with `channel = "edge"` to bound it (`^1.0.0-0`: every edge build up to the next breaking
+change), and `stable` with `semver` is rejected. The cluster root's `applications` are unchanged.
+
+For an application root built on `modules/application`, in this order:
+
+1. Release an image without the `flux/` copies of the two seed objects (drop `../../flux` from each deploy tree). They
+   carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so the next reconcile leaves them in place, unowned.
+2. Bump the module and apply. The release keeps its address, so nothing is reinstalled or pruned. The first apply that
+   changes the seed's values upgrades `application-<name>` in place and takes both objects back; until then they keep
+   what the image last applied.
+
+Applying the module while the image still ships `flux/` makes the two fight: every apply re-points the objects and the
+image's Kustomization puts its own copy back on its next reconcile.
+
 ## Release channels: edge and stable
 
 Every tag is immutable, and there is no `staging` channel any more. A repository's release workflow publishes on `main`

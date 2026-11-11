@@ -297,11 +297,17 @@ module "patchy" {
 }
 ```
 
-It creates exactly what the cluster root would: the bootstrap-only seed (`application-<name>`, the same local chart), a
+It creates what the cluster root would: the seed (`application-<name>`, the same local chart), a
 terraform-reconciled `application-<name>-inputs` release carrying the `<name>-vars` ConfigMap and the namespaces, the
 workload roles and the podless reader roles (`<cluster>-secrets-<ns>-<sa>`, so `${SECRETS_ROLE_PREFIX}<ns>-<sa>` keeps
 resolving). The names are the same on purpose: an application lives in the cluster root **or** in its own root, never
 both, and a collision fails loudly - helm refuses a release or namespace another release owns, IAM a duplicate role.
+
+**Terraform owns the seed.** Unlike a cluster root's applications, the module keeps `<name>-manifests` under terraform
+on every apply instead of handing it to the image. The application's repository moves its semver range or channel in the
+same apply as the infrastructure its next release needs, so a breaking release and the roles, grants or secrets it
+depends on land together. The image must not ship its own `flux/` copies of the two objects, or its Kustomization
+re-applies them on every reconcile and fights the module.
 
 **Application capacity.** `modules/application` owns no nodes. An application that needs a dedicated pool either calls
 `modules/node-group` beside it, fed from the same `application_target` (which carries the Linux node role, node

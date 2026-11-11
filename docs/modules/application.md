@@ -31,7 +31,7 @@ charts ship inside the module, so the helm provider needs no registry credential
 
 | Release / resource    | Contents                                                                                                         | Lifecycle            |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `helm_release.seed`   | Local chart `charts/application` (shared with the cluster root): the `<name>-manifests` RSIP + `ResourceSet`     | Bootstrap-only       |
+| `helm_release.seed`   | Local chart `charts/application` (shared with the cluster root): the `<name>-manifests` RSIP + `ResourceSet`     | Terraform-reconciled |
 | `helm_release.inputs` | Local chart `charts/inputs`: the `<name>-vars` ConfigMap and the pre-created namespaces, only when there are any | Terraform-reconciled |
 | Workload roles        | `<cluster>-<key>` per `workload_grants` entry, bound through Pod Identity                                        | Terraform-reconciled |
 | Secret reader roles   | `<cluster>-secrets-<ns>-<sa>` per `secret_readers` pair, trusted through the cluster's IRSA provider             | Terraform-reconciled |
