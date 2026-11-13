@@ -82,7 +82,7 @@ No modules.
 | Name | Description |
 | ---- | ----------- |
 | applications | The application seeds, keyed as var.applications: the bootstrap-only helm release name, the namespace the seed<br/>objects (<key>-manifests) live in, and the tag-listing provider the registry selected (ECRArtifactTag under the<br/>platform prefix, OCIArtifactTag elsewhere). |
-| namespace | Namespace the flux-operator and Flux controllers run in. |
+| namespace | The flux namespace, once the flux-operator release has created it. |
 | registry\_reader\_roles | IAM role ARNs the flux controllers assume through Pod Identity - the identities that read the platform registry. |
 <!-- END_TF_DOCS -->
 <!-- --8<-- [end:tf-docs] -->
