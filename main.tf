@@ -60,9 +60,14 @@ locals {
   addons = { for name, addon in var.addons : name => addon if addon.enabled }
 
   # Per-add-on configuration applied when the caller passes none of their own.
-  # coredns is pinned to the system pool the same way every other platform
-  # component is. The secrets provider must delegate file writes to the CSI
-  # driver: the podless SecretSync flow (the secret-sync flux component this
+  # Every add-on that runs a controller (coredns, the EBS CSI driver's
+  # controller, snapshot-controller and metrics-server) is pinned to the system
+  # pool the same way every other platform component is: the add-ons' own
+  # affinity only prefers non-Fargate nodes, so they would otherwise land on
+  # Karpenter's capacity, where consolidation, expiry and drift evict them and
+  # they hold a node back from consolidating. snapshot-controller's nodeSelector
+  # replaces its default kubernetes.io/os=linux, so that is restated. The
+  # secrets provider must delegate file writes to the CSI driver: the podless SecretSync flow (the secret-sync flux component this
   # module's stack depends on) mounts through a fake target path that exists
   # in no filesystem, so a provider that writes the files itself - its
   # default - fails every sync with "open /mnt/secrets-store/<path>: no such
@@ -70,6 +75,9 @@ locals {
   # gRPC instead, which serves real CSI mounts and the sync controller alike.
   addon_configuration_defaults = {
     coredns                               = jsonencode({ nodeSelector = local.system_node_selector })
+    aws-ebs-csi-driver                    = jsonencode({ controller = { nodeSelector = local.system_node_selector } })
+    snapshot-controller                   = jsonencode({ nodeSelector = merge({ "kubernetes.io/os" = "linux" }, local.system_node_selector) })
+    metrics-server                        = jsonencode({ nodeSelector = local.system_node_selector })
     aws-secrets-store-csi-driver-provider = jsonencode({ driverWritesSecrets = true })
   }
 }

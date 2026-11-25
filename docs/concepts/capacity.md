@@ -8,7 +8,10 @@ application published from its own root brings [its own capacity](#capacity-for-
 
 A managed node group labelled `role=system`. The platform controllers are pinned to it with `nodeSelector role=system`:
 flux, kyverno, cert-manager, karpenter, coredns and the rest. That keeps them away from Karpenter's workload capacity,
-so consolidation never evicts the controllers that run the cluster.
+so consolidation never evicts the controllers that run the cluster. The EKS add-ons that run a controller (coredns, the
+EBS CSI driver's controller, snapshot-controller and metrics-server) are pinned through their configuration values,
+because their own defaults only prefer non-Fargate nodes. An `addons` entry's `configuration_values` replaces that
+configuration, so an override restates the `nodeSelector` to stay on the system nodes.
 
 `system_node_group` sets its instance types, capacity type, size and disk. Its `min_size` is **the cluster's floor**,
 since Karpenter has no minimum. Counts are cluster-wide totals, not per availability zone.

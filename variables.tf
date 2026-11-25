@@ -417,6 +417,11 @@ variable "addons" {
     AWS supports its lifecycle, not the software. cert-manager and external-dns are community add-ons too but stay
     flux-managed on purpose - as add-ons they would pull images from AWS's registry, breaking the invariant that
     clusters never pull from a public registry and the Kyverno policy that enforces it.
+
+    configuration_values replaces the module's own configuration for that add-on wholesale. The module pins every
+    add-on that runs a controller (coredns, aws-ebs-csi-driver's controller, snapshot-controller, metrics-server) to the
+    system node group with nodeSelector role=system, and has the secrets provider delegate file writes to the CSI
+    driver (driverWritesSecrets), so an override that should keep that behaviour restates it.
   EOT
   type = map(object({
     enabled              = optional(bool, true)

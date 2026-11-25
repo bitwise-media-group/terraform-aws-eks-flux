@@ -1959,3 +1959,50 @@ run "application_vars_reject_lowercase_keys" {
 
   expect_failures = [var.application_vars]
 }
+
+# Every add-on that runs a controller stays on the system nodes by default, away from Karpenter's capacity.
+run "addons_pin_controllers_to_system_nodes" {
+  command = plan
+
+  assert {
+    condition     = jsondecode(aws_eks_addon.main["coredns"].configuration_values).nodeSelector == { role = "system" }
+    error_message = "coredns must be pinned to the system nodes"
+  }
+
+  assert {
+    condition     = jsondecode(aws_eks_addon.main["aws-ebs-csi-driver"].configuration_values).controller.nodeSelector == { role = "system" }
+    error_message = "the EBS CSI driver's controller must be pinned to the system nodes"
+  }
+
+  assert {
+    condition     = jsondecode(aws_eks_addon.main["snapshot-controller"].configuration_values).nodeSelector == { "kubernetes.io/os" = "linux", role = "system" }
+    error_message = "snapshot-controller must be pinned to the system nodes, keeping its default linux selector"
+  }
+
+  assert {
+    condition     = jsondecode(aws_eks_addon.main["metrics-server"].configuration_values).nodeSelector == { role = "system" }
+    error_message = "metrics-server must be pinned to the system nodes"
+  }
+
+  assert {
+    condition     = jsondecode(aws_eks_addon.main["aws-secrets-store-csi-driver-provider"].configuration_values).driverWritesSecrets == true
+    error_message = "the secrets provider must still delegate file writes to the CSI driver"
+  }
+}
+
+# A caller's configuration_values replaces the module's configuration for that add-on wholesale.
+run "addons_configuration_values_override" {
+  command = plan
+
+  variables {
+    addons = {
+      eks-pod-identity-agent = {}
+      metrics-server         = { configuration_values = "{\"replicas\":3}" }
+    }
+  }
+
+  assert {
+    condition     = aws_eks_addon.main["metrics-server"].configuration_values == "{\"replicas\":3}"
+    error_message = "an add-on's configuration_values must replace the module's configuration"
+  }
+}
