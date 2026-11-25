@@ -83,7 +83,10 @@ data "aws_ami" "karpenter" {
 }
 
 # The same for a name selector: one lookup per name, keyed by its pattern, so
-# each must match an image owned by owners on its own.
+# each must match an image owned by owners on its own. Nothing reads the result:
+# the terms keep the patterns so Karpenter still takes the newest match per
+# architecture at runtime, and pinning them to these lookups would defeat that.
+# tflint-ignore: terraform_unused_declarations
 data "aws_ami" "karpenter_names" {
   for_each = toset(local.karpenter_ami_patterns)
 
