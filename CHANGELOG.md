@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/bitwise-media-group/terraform-aws-eks-flux/compare/v0.1.0...v0.2.0) (2026-11-25)
+
+
+### Features
+
+* **karpenter:** select a custom AMI by several names ([f485b6a](https://github.com/bitwise-media-group/terraform-aws-eks-flux/commit/f485b6a722281b0b0aa51c012f11ccadc8bd46f5))
+
+
+### Bug Fixes
+
+* **karpenter:** silence unused-declaration lint on the AMI name lookups ([0e71457](https://github.com/bitwise-media-group/terraform-aws-eks-flux/commit/0e71457db972521dda975cdbf3928c97dff4c117))
+
 ## 0.1.0 (2026-11-19)
 
 
