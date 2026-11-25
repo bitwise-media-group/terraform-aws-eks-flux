@@ -17,17 +17,31 @@ locals {
   karpenter_node_pool = var.karpenter.node_pool
   karpenter_ami       = local.karpenter_node_pool.ami
 
-  karpenter_ami_name = try(replace(local.karpenter_ami.name, "{kubernetes_version}", aws_eks_cluster.main.version), null)
+  # name and names both select by EC2 name filter, so they resolve to one list,
+  # still holding "{kubernetes_version}" (the patterns key the plan-time lookups
+  # below, and the version is unknown until the cluster exists). names exists
+  # because one pattern rarely covers every architecture: an arm and an x86
+  # image are often named apart, beside variants such as GPU ones that a
+  # broader wildcard would also match.
+  karpenter_ami_patterns = try(coalesce(local.karpenter_ami.names, compact([local.karpenter_ami.name])), [])
 
   # The EC2NodeClass amiSelectorTerms, published whole as JSON (each branch
   # is encoded on its own: the term shapes differ). Karpenter forbids
   # combining id with any other field in a term, so an id's owner is checked
-  # through data.aws_ami.karpenter instead; a name becomes one name+owner term
-  # per owner (terms OR together), resolved by Karpenter at runtime.
+  # through data.aws_ami.karpenter instead; each name becomes one name+owner
+  # term per owner (terms OR together), resolved by Karpenter at runtime - the
+  # newest match for the instance's architecture.
   karpenter_ami_selector_terms = (
     local.karpenter_ami == null ? jsonencode([{ alias = local.karpenter_node_pool.ami_alias }]) :
     local.karpenter_ami.id != null ? jsonencode([{ id = data.aws_ami.karpenter[0].id }]) :
-    jsonencode([for owner in local.karpenter_ami.owners : { name = local.karpenter_ami_name, owner = owner }])
+    jsonencode(flatten([
+      for pattern in local.karpenter_ami_patterns : [
+        for owner in local.karpenter_ami.owners : {
+          name  = replace(pattern, "{kubernetes_version}", aws_eks_cluster.main.version)
+          owner = owner
+        }
+      ]
+    ]))
   )
 
   # An alias implies its family; any other selector needs spec.amiFamily, and
@@ -48,10 +62,11 @@ locals {
   discovery_targets = var.network.manage_discovery_tags ? var.network.node_subnet_ids : []
 }
 
-# Fails the plan early when the custom image is unowned by owners or matches
-# nothing - otherwise the first sign would be Karpenter refusing to launch.
+# Fails the plan early when the custom image is unowned by owners - otherwise
+# the first sign would be Karpenter refusing to launch. An id never waits on
+# the cluster; the name lookups below carry its version.
 data "aws_ami" "karpenter" {
-  count = local.karpenter_ami != null ? 1 : 0
+  count = try(local.karpenter_ami.id, null) != null ? 1 : 0
 
   owners      = local.karpenter_ami.owners
   most_recent = true
@@ -61,22 +76,28 @@ data "aws_ami" "karpenter" {
     values = ["available"]
   }
 
-  dynamic "filter" {
-    for_each = local.karpenter_ami.id != null ? [local.karpenter_ami.id] : []
+  filter {
+    name   = "image-id"
+    values = [local.karpenter_ami.id]
+  }
+}
 
-    content {
-      name   = "image-id"
-      values = [filter.value]
-    }
+# The same for a name selector: one lookup per name, keyed by its pattern, so
+# each must match an image owned by owners on its own.
+data "aws_ami" "karpenter_names" {
+  for_each = toset(local.karpenter_ami_patterns)
+
+  owners      = local.karpenter_ami.owners
+  most_recent = true
+
+  filter {
+    name   = "state"
+    values = ["available"]
   }
 
-  dynamic "filter" {
-    for_each = local.karpenter_ami_name != null ? [local.karpenter_ami_name] : []
-
-    content {
-      name   = "name"
-      values = [filter.value]
-    }
+  filter {
+    name   = "name"
+    values = [replace(each.key, "{kubernetes_version}", aws_eks_cluster.main.version)]
   }
 }
 

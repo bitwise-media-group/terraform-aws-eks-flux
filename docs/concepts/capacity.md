@@ -61,17 +61,21 @@ default never needs clearing. The selection is published whole as `KARPENTER_AMI
 `amiSelectorTerms` list, with `KARPENTER_AMI_FAMILY=AL2023` (Karpenter needs an explicit family for any selector other
 than an alias). `KARPENTER_AMI_ALIAS` is then empty.
 
-| `ami`             | Published terms                                                     | Resolved                                                   |
-| ----------------- | ------------------------------------------------------------------- | ---------------------------------------------------------- |
-| unset             | `[{"alias": "<ami_alias>"}]`                                        | By Karpenter, from the EKS-published SSM parameter         |
-| `owners` + `id`   | `[{"id": "<id>"}]`                                                  | Pinned; the owner is checked at plan time                  |
-| `owners` + `name` | `[{"name": "<name>", "owner": "<owner>"}, ...]`, one term per owner | By Karpenter at runtime: the newest match per architecture |
+| `ami`              | Published terms                                                     | Resolved                                                   |
+| ------------------ | ------------------------------------------------------------------- | ---------------------------------------------------------- |
+| unset              | `[{"alias": "<ami_alias>"}]`                                        | By Karpenter, from the EKS-published SSM parameter         |
+| `owners` + `id`    | `[{"id": "<id>"}]`                                                  | Pinned; the owner is checked at plan time                  |
+| `owners` + `name`  | `[{"name": "<name>", "owner": "<owner>"}, ...]`, one term per owner | By Karpenter at runtime: the newest match per architecture |
+| `owners` + `names` | the `name` terms for each name in turn                              | By Karpenter at runtime: the newest match per architecture |
 
 Karpenter forbids combining `id` with any other field in a term, so Terraform checks an id's owner itself and fails the
 plan if the image isn't owned by `owners`. A name term is resolved by Karpenter, which drifts nodes onto a newer
 matching image as it lands. That's the same lifecycle as `al2023@latest`, so one pattern can cover both architectures.
-As in node groups, `{kubernetes_version}` in `name` is replaced with the cluster's version. Karpenter renders the
-nodeadm bootstrap itself, so there's no `user_data_parts` here.
+Where images are named apart per architecture, and no single wildcard selects both without also matching another variant
+(a GPU build, say), `names` lists one pattern each: the terms OR together, so Karpenter still takes the newest match for
+each instance's architecture. Terraform looks each name up at plan time and fails the plan if one matches nothing owned
+by `owners`. As in node groups, `{kubernetes_version}` in `name` or `names` is replaced with the cluster's version.
+Karpenter renders the nodeadm bootstrap itself, so there's no `user_data_parts` here.
 
 `kms_key_arns` names the customer-managed keys an encrypted image's snapshots use. The controller launches nodes as its
 own role, so it's granted `Decrypt`, `DescribeKey`, `GenerateDataKeyWithoutPlaintext`, `ReEncrypt*` and `CreateGrant`

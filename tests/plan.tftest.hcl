@@ -823,7 +823,7 @@ run "karpenter_ami_defaults_to_the_alias" {
   }
 
   assert {
-    condition     = length(data.aws_ami.karpenter) == 0 && !contains([for statement in data.aws_iam_policy_document.karpenter_controller.statement : statement.sid], "EncryptedAMIKeys")
+    condition     = length(data.aws_ami.karpenter) + length(data.aws_ami.karpenter_names) == 0 && !contains([for statement in data.aws_iam_policy_document.karpenter_controller.statement : statement.sid], "EncryptedAMIKeys")
     error_message = "no image lookup and no KMS grant exist without a custom AMI"
   }
 }
@@ -962,6 +962,90 @@ run "karpenter_custom_ami_by_id" {
     condition     = data.aws_ami.karpenter[0].owners == tolist(["111122223333"])
     error_message = "the id must be looked up against the pinned owners"
   }
+}
+
+run "karpenter_custom_ami_by_names" {
+  command = plan
+
+  override_resource {
+    target          = aws_eks_cluster.main
+    override_during = plan
+    values = {
+      version = "1.33"
+      identity = [{
+        oidc = [{
+          issuer = "https://oidc.eks.eu-west-2.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+        }]
+      }]
+    }
+  }
+
+  variables {
+    karpenter = {
+      node_pool = {
+        architectures = ["amd64", "arm64"]
+        ami = {
+          owners = ["111122223333"]
+          # an arm and an x86 image named apart, beside a GPU variant that acme-*-eks-{kubernetes_version}-* would match
+          names = ["acme-arm-eks-{kubernetes_version}-*", "acme-eks-{kubernetes_version}-*"]
+        }
+      }
+    }
+  }
+
+  assert {
+    condition = jsondecode(local.reserved_cluster_vars.KARPENTER_AMI_SELECTOR_TERMS) == [
+      { name = "acme-arm-eks-1.33-*", owner = "111122223333" },
+      { name = "acme-eks-1.33-*", owner = "111122223333" },
+    ]
+    error_message = "each name becomes its own name+owner terms, in order, with {kubernetes_version} replaced"
+  }
+
+  assert {
+    condition     = toset(keys(data.aws_ami.karpenter_names)) == toset(["acme-arm-eks-{kubernetes_version}-*", "acme-eks-{kubernetes_version}-*"])
+    error_message = "each name must be looked up on its own, so one that matches nothing fails the plan"
+  }
+
+  assert {
+    condition = alltrue([
+      for pattern, lookup in data.aws_ami.karpenter_names :
+      contains([for filter in lookup.filter : one(filter.values) if filter.name == "name"], replace(pattern, "{kubernetes_version}", "1.33"))
+    ])
+    error_message = "each lookup must filter by its own name, with {kubernetes_version} replaced"
+  }
+
+  assert {
+    condition     = local.reserved_cluster_vars.KARPENTER_AMI_FAMILY == "AL2023" && local.reserved_cluster_vars.KARPENTER_AMI_ALIAS == ""
+    error_message = "a custom selector needs amiFamily AL2023 and must clear the alias"
+  }
+}
+
+run "karpenter_ami_rejects_name_and_names" {
+  command = plan
+
+  variables {
+    karpenter = {
+      node_pool = {
+        ami = { owners = ["111122223333"], name = "acme-*", names = ["acme-arm-*"] }
+      }
+    }
+  }
+
+  expect_failures = [var.karpenter]
+}
+
+run "karpenter_ami_rejects_empty_names" {
+  command = plan
+
+  variables {
+    karpenter = {
+      node_pool = {
+        ami = { owners = ["111122223333"], names = [] }
+      }
+    }
+  }
+
+  expect_failures = [var.karpenter]
 }
 
 run "karpenter_ami_rejects_id_and_name" {

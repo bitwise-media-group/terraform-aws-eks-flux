@@ -324,11 +324,13 @@ variable "karpenter" {
     (spec.limits). The cluster's floor is system_node_group.min_size.
 
     node_pool.ami selects a custom AL2023 image instead of ami_alias (it wins when set, so the alias default never
-    needs clearing): owners (required) plus exactly one of id or name, published as KARPENTER_AMI_SELECTOR_TERMS with
-    KARPENTER_AMI_FAMILY=AL2023. An id is checked against owners at plan time and pins the image; a name (EC2 name
-    filter, "{kubernetes_version}" replaced by the cluster version) becomes one name+owner selector term per owner,
-    which Karpenter resolves at runtime - the newest match per architecture, drifting nodes onto a newer image as it
-    lands. kms_key_arns grants the controller the KMS access an encrypted image's customer-managed key needs (the
+    needs clearing): owners (required) plus exactly one of id, name or names, published as
+    KARPENTER_AMI_SELECTOR_TERMS with KARPENTER_AMI_FAMILY=AL2023. An id is checked against owners at plan time and
+    pins the image; a name (EC2 name filter, "{kubernetes_version}" replaced by the cluster version) becomes one
+    name+owner selector term per owner, which Karpenter resolves at runtime - the newest match per architecture,
+    drifting nodes onto a newer image as it lands. names is several such filters, one set of terms each, for images
+    named apart per architecture (an arm and an x86 variant) that no single wildcard can select without also matching
+    others; each must match an image at plan time. kms_key_arns grants the controller the KMS access an encrypted image's customer-managed key needs (the
     key's own policy must allow it too). Karpenter renders the nodeadm bootstrap itself, so there are no
     user_data_parts here.
   EOT
@@ -345,6 +347,7 @@ variable "karpenter" {
         owners       = list(string)
         id           = optional(string)
         name         = optional(string)
+        names        = optional(list(string))
         kms_key_arns = optional(set(string), [])
       }))
       max_nodes            = optional(number, 20)
@@ -389,8 +392,17 @@ variable "karpenter" {
   }
 
   validation {
-    condition     = var.karpenter.node_pool.ami == null || (try(var.karpenter.node_pool.ami.id, null) == null) != (try(var.karpenter.node_pool.ami.name, null) == null)
-    error_message = "karpenter.node_pool.ami must set exactly one of id or name."
+    condition = var.karpenter.node_pool.ami == null || length(compact([
+      try(var.karpenter.node_pool.ami.id, null) == null ? "" : "id",
+      try(var.karpenter.node_pool.ami.name, null) == null ? "" : "name",
+      try(var.karpenter.node_pool.ami.names, null) == null ? "" : "names",
+    ])) == 1
+    error_message = "karpenter.node_pool.ami must set exactly one of id, name or names."
+  }
+
+  validation {
+    condition     = try(var.karpenter.node_pool.ami.names, null) == null || length(coalesce(try(var.karpenter.node_pool.ami.names, null), [])) > 0
+    error_message = "karpenter.node_pool.ami.names must name at least one filter (or use name for a single one)."
   }
 }
 
