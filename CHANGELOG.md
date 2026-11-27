@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/bitwise-media-group/terraform-aws-eks-flux/compare/v0.2.0...v0.2.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **addons:** pin the add-on controllers to the system nodes ([63c7901](https://github.com/bitwise-media-group/terraform-aws-eks-flux/commit/63c79013feb3ee0cf62c22b3dd6f90ed1984a64a))
+* **deps:** update bitwise-media-group/github-workflows action to v8.5.0 ([#100](https://github.com/bitwise-media-group/terraform-aws-eks-flux/issues/100)) ([1d9c0e9](https://github.com/bitwise-media-group/terraform-aws-eks-flux/commit/1d9c0e98d8bf305db70d6571d85beff656633c30))
+
 ## [0.2.0](https://github.com/bitwise-media-group/terraform-aws-eks-flux/compare/v0.1.0...v0.2.0) (2026-11-25)
 
 
